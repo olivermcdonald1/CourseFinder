@@ -313,6 +313,100 @@ def search_courses(session, *, limit=DEFAULT_LIMIT, offset=0, sort_by=None,
     return session.execute(stmt).scalars().all()
 
 
+def get_course(session, course_id):
+    """One course by id, or None. Case-insensitive on the caller's behalf."""
+    return session.get(Course, course_id.upper())
+
+
+def get_sections(session, course_id, term):
+    """
+    A course's sections for a term, each paired with its live seat row.
+
+    LEFT OUTER JOIN, not inner: a section we have not swept yet still exists and
+    should still be listed. An inner join would silently hide it.
+
+    Returned as (Section, CurrentSeats | None) tuples. There is no
+    relationship() on the models -- only foreign keys -- so there is no lazy
+    loading to trigger and no N+1 to avoid. The tradeoff is that joins are
+    explicit, which is arguably clearer at this size.
+    """
+    stmt = (select(Section, CurrentSeats)
+            .outerjoin(CurrentSeats, and_(CurrentSeats.crn == Section.crn,
+                                          CurrentSeats.term == Section.term))
+            .where(Section.course_id == course_id, Section.term == term)
+            .order_by(Section.type_of_class, Section.section_no))
+    return session.execute(stmt).all()
+
+
+def get_instructors(session, course_id, term):
+    """Instructor names for a course in a term. Term-scoped: unfiltered you'd
+    list next year's staff alongside this year's."""
+    stmt = (select(CourseInstructor.name)
+            .where(CourseInstructor.course_id == course_id,
+                   CourseInstructor.term == term)
+            .order_by(CourseInstructor.name))
+    return list(session.execute(stmt).scalars().all())
+
+
+def filter_options(session, term):
+    """
+    Distinct values for each filterable dimension, scoped to courses offered in
+    `term`.
+
+    Scoping matters: the catalogue has 249 subjects but only ~180 are offered in
+    a given Fall. Offering the other 69 in a dropdown guarantees empty results.
+    """
+    offered = _section_exists(term)
+
+    def course_column(column):
+        stmt = (select(column).where(offered, column.isnot(None))
+                .distinct().order_by(column))
+        return [v for v in session.execute(stmt).scalars().all()]
+
+    subjects_stmt = (select(Course.subject, func.count())
+                     .where(offered)
+                     .group_by(Course.subject)
+                     .order_by(func.count().desc()))
+
+    section_column = lambda column: [
+        v for v in session.execute(
+            select(column).where(Section.term == term, column.isnot(None))
+            .distinct().order_by(column)).scalars().all()]
+
+    # Distinct credit values, commonest first -- 3 alone covers ~2,400 courses,
+    # so the UI wants them ordered by popularity, not numerically.
+    credits_stmt = (select(Course.credits_min, func.count())
+                    .where(offered, Course.credits_min.isnot(None))
+                    .group_by(Course.credits_min)
+                    .order_by(func.count().desc()))
+
+    # Level is the first character of `code`; only the numeric ones are levels.
+    #
+    # `level` is built ONCE and reused. Calling func.left() twice produces two
+    # separate bind parameters -- `left(code, %(left_2)s)` in the SELECT and
+    # `left(code, %(left_3)s)` in the ORDER BY -- and under SELECT DISTINCT
+    # Postgres compares those expressions textually, decides they differ, and
+    # raises "ORDER BY expressions must appear in select list".
+    level = func.left(Course.code, 1)
+    levels_stmt = (select(level)
+                   .where(offered, level.between("1", "9"))
+                   .distinct().order_by(level))
+
+    return {
+        "term": term,
+        "faculties": course_column(Course.faculty),
+        "departments": course_column(Course.department),
+        "subjects": [{"code": s, "count": n}
+                     for s, n in session.execute(subjects_stmt).all()],
+        "campuses": section_column(Section.campus),
+        "class_types": section_column(Section.type_of_class),
+        "credit_options": [float(c) for c, _ in
+                           session.execute(credits_stmt).all()],
+        "levels": [int(d) * 100 for d in
+                   session.execute(levels_stmt).scalars().all()],
+    }
+
+
 def count_matching(session, **filters):
 
     """
