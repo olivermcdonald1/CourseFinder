@@ -7,9 +7,11 @@ import os
 from dotenv import load_dotenv
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
-target_metadata = Base.metadata
-print("LOADED env.py — tables:", list(target_metadata.tables.keys()))
 config = context.config
+
+# The URL comes from the environment, not alembic.ini -- so migrations follow
+# whatever database the app is pointed at, and no credential sits in a
+# committed file. alembic.ini's sqlalchemy.url is deliberately blank.
 load_dotenv()
 config.set_main_option("sqlalchemy.url", os.environ["DATABASE_URL"])
 # Interpret the config file for Python logging.
