@@ -2,3 +2,18 @@
 __pycache__/
 *.pyc
 .DS_Store
+.env
+
+# Regenerable data -- keep it out of git history.
+# data/raw:       rebuilt by collector/vsb_collect.py in ~100s (8.6MB/sweep)
+# data/processed: legacy JSONL, no longer in the load path (7.2MB)
+# data/reference: 18MB catalogue export. See PLANNER.md for how to obtain it.
+data/raw/
+data/processed/
+data/reference/
+
+# Runtime artifacts
+logs/
+.collect.lock
+*.tmp
+test-results/
