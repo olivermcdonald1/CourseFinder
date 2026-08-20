@@ -8,7 +8,7 @@ CourseFinder API.
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.routes import courses
+from app.routes import courses, sections
 
 app = FastAPI(
     title="CourseFinder",
@@ -27,6 +27,7 @@ app.add_middleware(
 )
 
 app.include_router(courses.router)
+app.include_router(sections.router)
 
 
 @app.get("/health", tags=["meta"])

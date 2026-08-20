@@ -6,8 +6,11 @@ queries, and this decides which. Not HTTP (that's routes/), not SQL (that's
 search.py).
 """
 
-from app.schemas.courses import CourseSummary, SearchResponse
-from app.search import count_matching, search_courses
+from app.schemas.courses import (CourseDetail, CourseSummary, FilterOptions,
+                                 SearchResponse, SectionSummary)
+from app.search import (count_matching, filter_options, get_course,
+                        get_instructors, get_sections, search_courses)
+from app.search import DEFAULT_TERM
 
 # Filtering on any of these already excludes unreviewed courses, because
 # `NULL <= 2.5` is NULL and WHERE only keeps TRUE. So reviewed_only is a no-op
@@ -49,6 +52,48 @@ def search(session, filters):
         # after the dependency closed the session.
         courses=[CourseSummary.model_validate(c) for c in courses],
     )
+
+
+def detail(session, course_id, term=DEFAULT_TERM):
+    """One course with its sections and instructors, or None if no such course.
+
+    Three queries, fixed: the course, its sections joined to seats, its
+    instructors. Returning None rather than raising keeps HTTP concerns in the
+    route -- this function has no opinion about status codes."""
+    course = get_course(session, course_id)
+    if course is None:
+        return None
+
+    sections = [
+        SectionSummary(
+            crn=section.crn,
+            section_no=section.section_no,
+            type_of_class=section.type_of_class,
+            campus=section.campus,
+            meetings=section.meetings,
+            # seats is None when the section has never been swept -- which is
+            # not the same as having no seats.
+            open_seats=seats.open_seats if seats else None,
+            waitlist_count=seats.waitlist_count if seats else None,
+            waitlist_seats=seats.waitlist_seats if seats else None,
+            is_full=seats.is_full if seats else None,
+            observed_at=seats.observed_at if seats else None,
+        )
+        for section, seats in get_sections(session, course.id, term)
+    ]
+
+    # model_validate reads the Course columns; model_copy grafts on the parts
+    # that don't live on that row.
+    return CourseDetail.model_validate(course).model_copy(update={
+        "term": term,
+        "instructors": get_instructors(session, course.id, term),
+        "sections": sections,
+    })
+
+
+def options(session, term=DEFAULT_TERM):
+    """Option lists for the filter chips."""
+    return FilterOptions.model_validate(filter_options(session, term))
 
 
 def _hidden_count(session, kwargs, total):
