@@ -20,7 +20,8 @@ authenticate.
 
 ## 1. Postgres
 
-Create a project at https://neon.tech (free tier: 0.5GB). Copy the **pooled**
+Create a project at https://neon.tech (free tier: 0.5GB). Fly's own Managed
+Postgres starts at $38/month, so it is the wrong tool here. Copy the **pooled**
 connection string and change the scheme so SQLAlchemy uses psycopg 3:
 
     postgresql+psycopg://USER:PASS@HOST/DB?sslmode=require
@@ -43,13 +44,22 @@ painful to recreate.
 
 ## 3. Deploy
 
-    fly auth login
-    fly launch --no-deploy --copy-config --name mcgill-course-finder
-    fly secrets set DATABASE_URL='postgresql+psycopg://...'
-    fly deploy
+The app `mcgill-course-finder` already exists, so seeding, the secret and the
+deploy are one script. Pass the connection string in the environment so the
+password stays in your shell -- not in a file, not in the repo:
+
+    DATABASE_URL='postgresql://USER:PASS@HOST/DB?sslmode=require' ./scripts/deploy.sh
+
+It checks the database is reachable, restores the dump only if the database is
+empty, stages the secret, deploys, and smoke-tests the four public paths. Safe
+to re-run.
 
 `release_command = "alembic upgrade head"` in fly.toml runs migrations before
 traffic shifts, so a bad migration aborts the deploy rather than half-applying.
+
+Note the two URL forms: SQLAlchemy needs `postgresql+psycopg://`, while
+pg_restore and psql only understand `postgresql://`. The script derives both
+from whichever you give it.
 
 ## 4. The daily sweep
 
@@ -60,13 +70,12 @@ works end to end rather than waiting for 11:00 UTC:
     gh workflow run "collect seats"
     gh run watch
 
-## 5. Finish the link preview
+## 5. Link preview
 
-`og:image` points at `/og.png`, which does not exist yet — link previews render
-blank until it does, and group chats are the distribution channel. Drop a
-1200x630 screenshot at `frontend/og.png` and make the tag absolute:
-
-    <meta property="og:image" content="https://mcgill-course-finder.fly.dev/og.png">
+Done: `frontend/og.png` is a 1200x630 dark-mode capture and the tag is absolute
+at `https://mcgill-course-finder.fly.dev/og.png`. If the app is ever renamed,
+that URL and `og:url` in `frontend/index.html` must change with it, or previews
+in group chats go blank.
 
 ## Operational notes
 
