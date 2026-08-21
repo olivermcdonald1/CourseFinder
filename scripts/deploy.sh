@@ -13,6 +13,9 @@ set -euo pipefail
 
 APP="mcgill-course-finder"
 DUMP="data/coursefinder.dump"
+# Match the server major version. Neon runs Postgres 18; a mismatched
+# pg_restore still works but warns, and matching removes a class of doubt.
+PG_IMAGE="postgres:18"
 
 if [[ -z "${DATABASE_URL:-}" ]]; then
   echo "DATABASE_URL is not set. Get the POOLED connection string from your"
@@ -37,11 +40,11 @@ if [[ "$LIBPQ_URL" != *sslmode=* ]]; then
 fi
 
 echo "==> 1/4  checking the database is reachable"
-docker run --rm postgres:16 psql "$LIBPQ_URL" -tAc "select version()" \
+docker run --rm "$PG_IMAGE" psql "$LIBPQ_URL" -tAc "select version()" \
   | head -1 | sed 's/^/         /'
 
 echo "==> 2/4  seeding"
-rows=$(docker run --rm postgres:16 psql "$LIBPQ_URL" -tAc \
+rows=$(docker run --rm "$PG_IMAGE" psql "$LIBPQ_URL" -tAc \
   "select coalesce((select count(*) from courses), 0)" 2>/dev/null || echo 0)
 if [[ "$rows" -gt 0 ]]; then
   echo "         $rows courses already present, skipping restore"
@@ -49,9 +52,9 @@ else
   [[ -f "$DUMP" ]] || { echo "missing $DUMP -- regenerate it with pg_dump"; exit 1; }
   # --no-owner/--no-privileges because the local role names do not exist on
   # Neon and would otherwise abort every GRANT.
-  docker run --rm -i postgres:16 pg_restore --no-owner --no-privileges \
+  docker run --rm -i "$PG_IMAGE" pg_restore --no-owner --no-privileges \
     --dbname "$LIBPQ_URL" < "$DUMP" 2>&1 | tail -5 | sed 's/^/         /' || true
-  after=$(docker run --rm postgres:16 psql "$LIBPQ_URL" -tAc "select count(*) from courses")
+  after=$(docker run --rm "$PG_IMAGE" psql "$LIBPQ_URL" -tAc "select count(*) from courses")
   echo "         restored, $after courses"
 fi
 

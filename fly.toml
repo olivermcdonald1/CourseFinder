@@ -1,8 +1,8 @@
-# One machine serving the API and the frontend. Montreal, because that is where
-# the students and the database are and a cross-continent round trip per search
-# is the one latency cost worth eliminating for free.
+# One machine serving the API and the frontend. Toronto: Montreal (yul) is
+# deprecated and refuses new resources, and yyz is the closest remaining region
+# to campus -- ~500km, single-digit added milliseconds.
 app = "mcgill-course-finder"
-primary_region = "yul"
+primary_region = "yyz"
 
 [build]
 
