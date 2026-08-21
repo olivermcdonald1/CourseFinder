@@ -17,3 +17,5 @@ logs/
 .collect.lock
 *.tmp
 test-results/
+# seed dump for restoring into a fresh Postgres (1.5MB, regenerable)
+data/*.dump

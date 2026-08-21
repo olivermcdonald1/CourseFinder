@@ -7,9 +7,11 @@ search.py).
 """
 
 from app.schemas.courses import (CourseDetail, CourseSummary, FilterOptions,
-                                 SearchResponse, SectionSummary)
+                                 Requirement, SearchResponse, SectionSummary,
+                                 Unlocks)
 from app.search import (count_matching, filter_options, get_course,
-                        get_instructors, get_sections, search_courses)
+                        get_instructors, get_requirements, get_sections,
+                        get_unlocks, search_page)
 from app.search import DEFAULT_TERM
 
 # Filtering on any of these already excludes unreviewed courses, because
@@ -39,8 +41,8 @@ def search(session, filters):
     sort_by = kwargs.pop("sort_by", None)
 
     total = count_matching(session, **kwargs)
-    courses = search_courses(session, limit=limit, offset=offset,
-                             sort_by=sort_by, **kwargs)
+    rows = search_page(session, limit=limit, offset=offset,
+                       sort_by=sort_by, **kwargs)
 
     return SearchResponse(
         total=total,
@@ -50,8 +52,84 @@ def search(session, filters):
         # Convert INSIDE the session scope. A Course handed back raw would raise
         # DetachedInstanceError when serialization touched a lazy attribute
         # after the dependency closed the session.
-        courses=[CourseSummary.model_validate(c) for c in courses],
+        courses=[_summary(row) for row in rows],
     )
+
+
+def _summary(row):
+    """One search row -> CourseSummary, with the seat rollup grafted on."""
+    (course, n_sections, max_open, max_wait, observed_at,
+     has_history, delta, days) = row
+    return CourseSummary.model_validate(course).model_copy(update={
+        "n_sections": n_sections,
+        "open_seats": max_open,
+        "waitlist_count": max_wait,
+        "has_history": has_history,
+        "observed_at": observed_at,
+        "seats_delta": delta,
+        "trend_days": days,
+        # Guard days: a same-day span would divide by zero, and a rate over
+        # zero days is meaningless anyway.
+        "seats_per_day": (round(delta / days, 2)
+                          if delta is not None and days else None),
+    })
+
+
+# VSB encodes day-of-week as an integer with Sunday = 1. Verified: a Tue/Thu
+# course returns 3 and 5.
+DAY_NAMES = {1: "Sun", 2: "Mon", 3: "Tue", 4: "Wed", 5: "Thu", 6: "Fri", 7: "Sat"}
+
+
+def _clock(minutes):
+    """
+    605 -> '10:05 am';  815 -> '1:35 pm'. VSB stores minutes from midnight.
+
+    12-hour with a lowercase suffix, because that is how a McGill timetable is
+    read aloud. No leading zero on the hour -- "1:35 pm" not "01:35 pm".
+    """
+    if minutes is None:
+        return None
+    hour, minute = divmod(minutes % (24 * 60), 60)
+    suffix = "am" if hour < 12 else "pm"
+    hour12 = hour % 12 or 12
+    return f"{hour12}:{minute:02d} {suffix}"
+
+
+def _schedule_text(meetings):
+    """
+    Meetings -> "Tue Thu 11:35-12:55", grouping days that share a time.
+
+    A section usually meets at the same time on several days, so listing each
+    meeting separately would read "Tue 11:35-12:55 · Thu 11:35-12:55" and take
+    twice the width to say the same thing.
+    """
+    if not meetings:
+        return None, None
+
+    slots, rooms = {}, []
+    for m in meetings:
+        start, end = _clock(m.get("start_min")), _clock(m.get("end_min"))
+        day = DAY_NAMES.get(m.get("day"))
+        if day is None:
+            continue
+        slots.setdefault((start, end), []).append(day)
+        if m.get("location") and m["location"] not in rooms:
+            rooms.append(m["location"])
+
+    order = list(DAY_NAMES.values())
+    parts = []
+    for (start, end), days in slots.items():
+        days = sorted(set(days), key=order.index)
+        if start and end:
+            # "11:35-12:55 pm" rather than "11:35 am-12:55 pm" when both sides
+            # share a suffix -- the repeated am/pm carries no information.
+            a, b = start.rsplit(" ", 1), end.rsplit(" ", 1)
+            when = (f"{a[0]}-{end}" if a[1] == b[1] else f"{start}-{end}")
+        else:
+            when = "time TBA"
+        parts.append(f"{' '.join(days)} {when}")
+
+    return (" · ".join(parts) or None), (", ".join(rooms) or None)
 
 
 def detail(session, course_id, term=DEFAULT_TERM):
@@ -64,8 +142,10 @@ def detail(session, course_id, term=DEFAULT_TERM):
     if course is None:
         return None
 
-    sections = [
-        SectionSummary(
+    sections = []
+    for section, seats in get_sections(session, course.id, term):
+        when, rooms = _schedule_text(section.meetings)
+        sections.append(SectionSummary(
             crn=section.crn,
             section_no=section.section_no,
             type_of_class=section.type_of_class,
@@ -78,9 +158,9 @@ def detail(session, course_id, term=DEFAULT_TERM):
             waitlist_seats=seats.waitlist_seats if seats else None,
             is_full=seats.is_full if seats else None,
             observed_at=seats.observed_at if seats else None,
-        )
-        for section, seats in get_sections(session, course.id, term)
-    ]
+            schedule_text=when,
+            rooms=rooms,
+        ))
 
     # model_validate reads the Course columns; model_copy grafts on the parts
     # that don't live on that row.
@@ -88,6 +168,14 @@ def detail(session, course_id, term=DEFAULT_TERM):
         "term": term,
         "instructors": get_instructors(session, course.id, term),
         "sections": sections,
+        "requirements": [
+            Requirement(code=code, kind=kind, course_id=cid, title=title)
+            for code, kind, cid, title in get_requirements(session, course.id)
+        ],
+        "unlocks": [
+            Unlocks(course_id=cid, title=title, avg_rating=r, review_count=n)
+            for cid, title, r, n in get_unlocks(session, course.id)
+        ],
     })
 
 

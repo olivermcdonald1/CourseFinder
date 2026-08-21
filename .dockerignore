@@ -1,0 +1,20 @@
+# Trailing slashes do NOT match a directory here -- `data/` silently kept 41MB
+# of scraped XML in the image. Bare names do match.
+.git
+.github
+.venv
+__pycache__
+**/__pycache__
+*.pyc
+.env
+.env.*
+data
+logs
+test-results
+collector/parsed.json
+collector/seats.csv
+# NOT *.md -- pyproject declares README.md as the package readme, so excluding
+# it makes `uv sync` fail to build the project.
+PLANNER.md
+API_SPEC.md
+DEPLOY.md

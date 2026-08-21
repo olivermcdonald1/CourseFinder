@@ -29,6 +29,53 @@ class Course(Base):
     avg_difficulty: Mapped[float | None]
     review_count: Mapped[int | None]
 
+    # Human-readable requirement prose, straight from the calendar. This is the
+    # authoritative version -- the parsed forms below are conveniences and both
+    # lose something.
+    prerequisites_text: Mapped[str | None]
+    corequisites_text: Mapped[str | None]
+    restrictions_text: Mapped[str | None]
+
+    # The requirement TREE, which preserves AND/OR structure the flat edge list
+    # cannot. COMP-251 is "COMP 250 AND (MATH 235 OR MATH 240)"; flattened to
+    # three codes that reads as "all three", which is wrong.
+    #   {"type":"group","data":{"operator":"AND","groups":[
+    #      {"type":"course","data":"COMP 250"}, {...}]}}
+    logical_prerequisites: Mapped[dict | None] = mapped_column(JSONB)
+    logical_corequisites: Mapped[dict | None] = mapped_column(JSONB)
+
+class CoursePrerequisite(Base):
+    """
+    Flat requirement edges: "course X requires code Y".
+
+    WHY required_code IS PLAIN TEXT, NOT A FOREIGN KEY
+      294 of 2,778 distinct requirement codes name courses that aren't in the
+      catalogue -- retired courses, other institutions, CEGEP objectives. A FK
+      would reject those rows, silently dropping real requirements. Callers can
+      LEFT JOIN to courses and treat a miss as "external requirement".
+
+    WHY THERE IS NO leads_to KIND
+      The catalogue ships a `leadingTo` list, but every one of its 7,115 edges
+      is already a prerequisite edge inverted -- it is fully derivable. Storing
+      it too would be a second source of truth free to disagree with the first.
+      "What does this course unlock" is a reverse query on this table.
+
+    AND/OR IS NOT REPRESENTED HERE
+      These edges answer "is Y mentioned in X's requirements", which is enough
+      for graph traversal. Whether the student needs all of them or one of them
+      lives in courses.logical_prerequisites.
+    """
+    __tablename__ = "course_prerequisites"
+    __table_args__ = (
+        # Declared here as well as in the migration -- an index that lives only
+        # in a migration looks like drift to autogenerate, which then proposes
+        # dropping it on every future revision.
+        Index("ix_prereq_reverse", "required_code", "kind"),
+    )
+    course_id: Mapped[str] = mapped_column(ForeignKey("courses.id"), primary_key=True)
+    required_code: Mapped[str] = mapped_column(primary_key=True)   # "COMP250"
+    kind: Mapped[str] = mapped_column(primary_key=True)            # prerequisite | corequisite
+
 class CourseInstructor(Base):
     """
     Who teaches a course in a given term.

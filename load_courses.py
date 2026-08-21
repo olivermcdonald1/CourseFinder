@@ -9,6 +9,12 @@ OWNERSHIP
   its `credits` is per-section, so tutorials report 0.0. Nothing in this file
   reads VSB data.
 
+COLUMN OWNERSHIP
+  This file writes descriptive fields only. avg_rating, avg_difficulty and
+  review_count belong to update_ratings.py, which reads them from the live
+  mcgill.courses API -- the static export has them all zeroed, so writing them
+  from here wipes real data on every reload. One writer per column.
+
 IDEMPOTENT
   Upsert, not insert. Re-running updates existing rows in place rather than
   raising on the primary key, so this is safe to run against a populated
@@ -30,7 +36,7 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import sessionmaker
 
 from app.db import engine
-from app.models import Course, CourseInstructor, Section
+from app.models import Course, CourseInstructor, CoursePrerequisite, Section
 
 # VSB term codes are <calendar year of the term><month>. Verified against live
 # responses: 202609 -> "Fall 2026", 202701 -> "Winter 2027". Summer is inferred
@@ -86,10 +92,71 @@ def to_course_fields(rec):
         "faculty": rec["faculty"],
         "department": rec["department"],
         "url": rec["url"],
-        "avg_rating": rec["avgRating"],
-        "avg_difficulty": rec["avgDifficulty"],
-        "review_count": rec["reviewCount"],
+        # avg_rating / avg_difficulty / review_count are DELIBERATELY ABSENT.
+        #
+        # They belong to update_ratings.py, which reads them from the live
+        # mcgill.courses API. The static export in data/reference/ has every one
+        # of them zeroed, so including them here means each catalogue reload
+        # silently wipes real ratings -- COMP-251 went from 2,609 reviews to 0
+        # exactly that way. An upsert refreshes every column it is given, so the
+        # only safe rule is that one writer owns a column.
+        #
+        #   this file          -> descriptive fields (title, credits, requirements)
+        #   update_ratings.py  -> avg_rating, avg_difficulty, review_count
+        #
+        # On a fresh database the rating columns stay NULL until
+        # update_ratings.py runs. That is correct: unknown, not zero.
+
+        # The prose is authoritative; the tree and the flat edges are both
+        # lossy conveniences derived from the same source.
+        "prerequisites_text": _text(rec.get("prerequisitesText")),
+        "corequisites_text": _text(rec.get("corequisitesText")),
+        "restrictions_text": _text(rec.get("restrictions")),
+        "logical_prerequisites": rec.get("logicalPrerequisites"),
+        "logical_corequisites": rec.get("logicalCorequisites"),
     }
+
+
+def _text(value):
+    """
+    Requirement fields arrive as a string, a list of strings, or null.
+
+    Coerced here rather than in the model so the column is always either text
+    or NULL -- a list reaching a String column raises at flush time, several
+    thousand rows into the batch, with nothing to say which record did it.
+    """
+    if value is None:
+        return None
+    if isinstance(value, list):
+        return "\n".join(str(v) for v in value if v) or None
+    return str(value) or None
+
+
+def to_prerequisite_rows(rec):
+    """
+    Catalogue record -> course_prerequisites edges.
+
+    Deduped on the composite key: a code can appear in both the prerequisite
+    and corequisite lists, and occasionally twice in one list. Postgres's
+    ON CONFLICT handles collisions with EXISTING rows, not duplicates inside a
+    single statement, so the dedupe has to happen here.
+
+    No `leads_to` edges: the catalogue's `leadingTo` is fully derivable by
+    inverting these (all 7,115 of its edges are prerequisite edges already), so
+    storing it would be a second source of truth free to disagree.
+    """
+    course_id = f'{rec["subject"]}-{rec["code"]}'
+    rows = {}
+    for kind, key in (("prerequisite", "prerequisites"),
+                      ("corequisite", "corequisites")):
+        for code in rec.get(key) or []:
+            code = (code or "").strip().upper()
+            if not code:
+                continue
+            rows[(course_id, code, kind)] = {
+                "course_id": course_id, "required_code": code, "kind": kind,
+            }
+    return list(rows.values())
 
 
 def term_code(label):
@@ -226,6 +293,7 @@ def main():
     # Two courses never share a (crn, term), but a section can be reached from
     # only one course, so no cross-record merge is needed here.
     sections = [row for r in records for row in to_section_rows(r)]
+    prereqs = [row for r in records for row in to_prerequisite_rows(r)]
 
     with Session() as session:
         # One transaction for the whole file. A crash mid-load rolls back
@@ -235,10 +303,13 @@ def main():
         n_instructors = upsert(session, CourseInstructor, instructors,
                                ["course_id", "term", "name"])
         n_sections = upsert(session, Section, sections, ["crn", "term"])
+        n_prereqs = upsert(session, CoursePrerequisite, prereqs,
+                           ["course_id", "required_code", "kind"])
         session.commit()
 
     print(f"{n_courses} courses, {n_instructors} instructors, "
-          f"{n_sections} sections <- {args.file.name}")
+          f"{n_sections} sections, {n_prereqs} requirement edges "
+          f"<- {args.file.name}")
     return 0
 
 

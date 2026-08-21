@@ -32,6 +32,41 @@ SECTION_SQL = text("""
 """)
 
 
+def _observed_window(history):
+    """
+    First snapshot vs latest, with the real span between them.
+
+    Returns None with fewer than two snapshots -- one observation is a reading,
+    not a trend, and inventing a zero delta would claim we'd watched something
+    hold steady when we had only looked once.
+
+    `per_day` is signed: negative means seats are disappearing. Rate is the
+    number a student can act on ("about 5 a day, so it's gone by Friday");
+    the raw delta alone doesn't say how fast.
+    """
+    if len(history) < 2:
+        return None
+
+    first, last = history[0], history[-1]
+    days = (last["day"] - first["day"]).days
+    if days <= 0:
+        return None
+
+    def delta(field):
+        a, b = first[field], last[field]
+        return None if a is None or b is None else b - a
+
+    seats = delta("open_seats")
+    return {
+        "from_day": first["day"],
+        "to_day": last["day"],
+        "days": days,
+        "open_delta": seats,
+        "waitlist_delta": delta("waitlist_count"),
+        "open_per_day": None if seats is None else round(seats / days, 2),
+    }
+
+
 def get_movement(session, crn, term):
     """
     -> dict, or None if no such (crn, term) section exists.
@@ -57,6 +92,15 @@ def get_movement(session, crn, term):
     return {
         "crn": crn,
         "term": term,
+        # Movement over the window we ACTUALLY have, not a fixed 7 days.
+        #
+        # The view's 1/3/7-day columns look for a snapshot at or before a fixed
+        # offset, so a section first seen two days ago reports NULL for all of
+        # them -- it says "tracked" and then shows nothing, which is the worst
+        # of both. This is computed from the series above, so it is populated
+        # the moment a second snapshot exists, and it always states its own
+        # span rather than implying a week.
+        "observed": _observed_window(history),
         "course_id": section["course_id"],
         "section_no": section["section_no"],
         "type_of_class": section["type_of_class"],

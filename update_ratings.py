@@ -15,6 +15,12 @@ IT DOES NOT TOUCH THEIR DATABASE
   the join key -- the API's `_id` ("COMP250") is what we stored in
   courses.catalogue_id when the catalogue was first loaded.
 
+THIS FILE OWNS THREE COLUMNS
+  avg_rating, avg_difficulty, review_count. load_courses.py deliberately does
+  not write them -- the static catalogue export has them zeroed, so a reload
+  would silently wipe everything patched here. Run this after any catalogue
+  reload.
+
 UNREVIEWED COURSES GET NULL, NOT 0.0
   The API reports 0.0 rating for a course nobody has reviewed. Stored as 0.0
   that sorts *below* a genuinely terrible course, and "easy courses" would

@@ -33,6 +33,22 @@ class SeatDeltas(BaseModel):
     wl_cleared_per_day: float | None
 
 
+class ObservedWindow(BaseModel):
+    """
+    Movement over the span actually observed, rather than a fixed 7 days.
+
+    Always populated once two snapshots exist, and it reports its own `days` so
+    the UI can say "3 seats over 2 days" instead of implying a week.
+    """
+
+    from_day: date
+    to_day: date
+    days: int
+    open_delta: int | None
+    waitlist_delta: int | None
+    open_per_day: float | None
+
+
 class SeatDay(BaseModel):
     day: date
     open_seats: int | None
@@ -47,4 +63,5 @@ class MovementResponse(BaseModel):
     type_of_class: str | None
     current: SeatState | None
     deltas: SeatDeltas | None
+    observed: ObservedWindow | None
     history: list[SeatDay]

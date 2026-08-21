@@ -1,0 +1,59 @@
+# The seat sweep needs no server: it is ~100 seconds once a day, so it runs
+# here and writes straight to the database. Nothing to host, nothing to keep
+# awake, and the collector's logs are the run history.
+name: collect seats
+
+on:
+  schedule:
+    # 11:00 UTC = 7am Eastern. GitHub's scheduler runs late under load, so
+    # nothing downstream may assume an exact time -- the loader is idempotent
+    # and keyed on the observation date, not on when the job fired.
+    - cron: "0 11 * * *"
+  workflow_dispatch:        # so a sweep can be forced by hand after a failure
+
+concurrency:
+  # Two sweeps at once would race on the same (crn, term) rows. The later one
+  # waits rather than being dropped, so a manual run during a slow scheduled
+  # run still happens.
+  group: collect
+  cancel-in-progress: false
+
+jobs:
+  sweep:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - run: uv sync --locked
+
+      # One real page load per sweep, to read the t/e time checksum off a
+      # genuine class-data request. Without those VSB answers "Please correct
+      # your device's timezone and time" -- so the browser is not optional.
+      - run: uv run playwright install --with-deps chromium
+
+      - name: Sweep both terms
+        run: |
+          uv run python collector/vsb_collect.py --term 202609
+          uv run python collector/vsb_collect.py --term 202701
+
+      - name: Load observations
+        run: uv run python load_observations.py
+
+      - name: Prune snapshots past the retention window
+        run: uv run python scripts/prune_snapshots.py --days 90
+
+      # The XML is regenerable and large; keep it only long enough to debug a
+      # failed run.
+      - if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: raw-xml
+          path: data/raw/
+          retention-days: 3

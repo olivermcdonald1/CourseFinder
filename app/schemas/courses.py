@@ -26,6 +26,9 @@ class CourseFilters(BaseModel):
     campus: Literal["Downtown", "Macdonald", "Distance", "Off-campus"] | None = None
     has_open_seats: bool = False
     max_waitlist: int | None = Field(None, ge=0)
+    # Minutes from midnight. 600 = "nothing before 10am".
+    earliest_start: int | None = Field(None, ge=0, le=1439)
+    has_history: bool = False
 
     sort_by: Literal["rating", "easiest", "popular", "seats"] | None = None
     limit: int = Field(50, ge=1, le=100)
@@ -40,9 +43,29 @@ class CourseSummary(BaseModel):
     title: str
     credits_text: str | None
     faculty: str | None
+    department: str | None
     avg_rating: float | None
     avg_difficulty: float | None
     review_count: int | None
+
+    # Seat rollup across the course's sections this term, grafted on by the
+    # service from search_page()'s extra columns. None means the course has
+    # sections but no observation yet -- which is not the same as zero seats.
+    n_sections: int | None = None
+    open_seats: int | None = None
+    waitlist_count: int | None = None
+    has_history: bool = False
+    # When the newest of this course's sections was last swept, so the UI can
+    # say how old the seat number is instead of implying it is live to the
+    # second.
+    observed_at: datetime | None = None
+
+    # Seats gained (+) or lost (-) across the course's sections since we first
+    # saw it, and over how many days. seats_per_day is the actionable form: a
+    # student can turn "-4.5 a day" into "gone by Thursday"; a raw total can't.
+    seats_delta: int | None = None
+    trend_days: int | None = None
+    seats_per_day: float | None = None
 
 class SearchResponse(BaseModel):
     total: int
@@ -66,11 +89,36 @@ class SectionSummary(BaseModel):
     type_of_class: str | None
     campus: str | None
     meetings: list[dict] | None
+    # "Tue Thu 11:35-12:55 · MCMED 522" -- assembled by the service, because
+    # `meetings` holds VSB's raw day integers and minutes-from-midnight, which
+    # no interface should ask a student to decode.
+    schedule_text: str | None = None
+    rooms: str | None = None
     open_seats: int | None
     waitlist_count: int | None
     waitlist_seats: int | None
     is_full: bool | None
     observed_at: datetime | None
+
+
+class Requirement(BaseModel):
+    """
+    One requirement edge. `course_id` is None when the code names something
+    outside the catalogue (a retired course, a CEGEP objective) -- the UI shows
+    those as plain text rather than a link.
+    """
+
+    code: str
+    kind: str
+    course_id: str | None
+    title: str | None
+
+
+class Unlocks(BaseModel):
+    course_id: str
+    title: str
+    avg_rating: float | None
+    review_count: int | None
 
 
 class CourseDetail(BaseModel):
@@ -99,10 +147,19 @@ class CourseDetail(BaseModel):
     avg_difficulty: float | None
     review_count: int | None
 
+    # Requirement prose is authoritative; the tree preserves AND/OR that the
+    # flat edge list destroys; the edges are for traversal.
+    prerequisites_text: str | None = None
+    corequisites_text: str | None = None
+    restrictions_text: str | None = None
+    logical_prerequisites: dict | None = None
+
     # Filled in by the service, not read off the Course row.
     term: str = ""
     instructors: list[str] = []
     sections: list[SectionSummary] = []
+    requirements: list[Requirement] = []
+    unlocks: list[Unlocks] = []
 
 
 class SubjectOption(BaseModel):

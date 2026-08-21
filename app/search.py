@@ -27,9 +27,13 @@ NULLS LAST IS NOT OPTIONAL
   returns 7,698 unreviewed courses before anything real.
 """
 
-from sqlalchemy import and_, case, exists, func, or_, select
+import re
 
-from app.models import Course, CourseInstructor, CurrentSeats, Section
+from sqlalchemy import (Integer, and_, case, distinct, exists, func, or_,
+                        select)
+
+from app.models import (Course, CourseInstructor, CoursePrerequisite,
+                        CurrentSeats, SeatDaily, Section)
 
 DEFAULT_TERM = "202609"          # Fall 2026
 DEFAULT_LIMIT = 50
@@ -44,8 +48,25 @@ PRIOR_WEIGHT = 20
 SORT_OPTIONS = ("rating", "easiest", "popular", "seats")
 
 
+def _earliest_meeting_min():
+    """
+    The earliest start time, in minutes from midnight, across a section's
+    meetings -- as a scalar subquery over the JSONB array.
+
+    `meetings` is a JSON array of {day, start_min, end_min, location}, so this
+    unnests it and takes the min. Sections with no meetings (async, TBA) return
+    NULL, which means a "nothing before 10am" filter excludes them: an unknown
+    time can't be promised to be late.
+    """
+    element = func.jsonb_array_elements(Section.meetings).alias("m")
+    return (select(func.min(
+                func.cast(element.column.op("->>")("start_min"), Integer)))
+            .select_from(element)
+            .scalar_subquery())
+
+
 def _section_exists(term, *, campus=None, class_type=None,
-                    open_seats=False, max_waitlist=None):
+                    open_seats=False, max_waitlist=None, earliest_start=None):
     """
     "This course has a section in `term` satisfying ALL of these."
 
@@ -63,6 +84,9 @@ def _section_exists(term, *, campus=None, class_type=None,
         clauses.append(Section.campus.ilike(campus))
     if class_type is not None:
         clauses.append(Section.type_of_class.ilike(class_type))
+    if earliest_start is not None:
+        # No meeting in this section may begin before earliest_start.
+        clauses.append(_earliest_meeting_min() >= earliest_start)
 
     # Only correlate to current_seats when a seat condition was actually asked
     # for -- otherwise a section with no observation yet would be excluded.
@@ -89,6 +113,73 @@ def _taught_by(name, term=None):
     if term is not None:
         clauses.append(CourseInstructor.term == term)
     return exists().where(and_(*clauses))
+
+
+def _keyword_clauses(text):
+    """
+    Free-text matching: every token must appear SOMEWHERE, in any field.
+
+    A single `ILIKE '%whole query%'` only matches a contiguous substring, so
+    "intro comp" found nothing even though "Introduction to Computer Science" is
+    obviously it. Tokenising fixes that:
+
+        AND over tokens, OR over fields
+
+    Fields include subject and both id spellings, so "math" matches every MATH
+    course *and* anything with "math" in its title -- which is what someone
+    typing four letters actually wants, rather than an exact subject-code match
+    that returns nothing for "calc".
+
+    Capped at 8 tokens so a pasted paragraph can't build 40 OR-groups.
+    """
+    clauses = []
+    for token in _tokens(text):
+        pattern = f"%{token}%"
+        clauses.append(or_(
+            Course.id.ilike(pattern),            # COMP-250
+            Course.catalogue_id.ilike(pattern),  # COMP250
+            Course.subject.ilike(pattern),
+            Course.title.ilike(pattern),
+            Course.description.ilike(pattern),
+        ))
+    return clauses
+
+
+def _tokens(text):
+    return [t for t in re.split(r"\s+", (text or "").strip()) if t][:8]
+
+
+def _relevance(text):
+    """
+    Which field matched decides the order: specific beats broad.
+
+        0  the code            "COMP 250" -> COMP-250
+        1  the title           every token in the course name
+        2  the subject         "math" -> all MATH courses
+        3  description only    the token is buried in the blurb
+
+    Without this, searching "climate" ranked "The Italian Renaissance" (whose
+    description mentions the word) alongside "Climate Physics". Tier 1 requires
+    ALL tokens in the title, so "intro comp" still lands on Introduction to
+    Computer Science rather than on whatever mentions both words in prose.
+    """
+    tokens = _tokens(text)
+    if not tokens:
+        return None
+
+    joined = f"%{' '.join(tokens)}%"
+    squashed = f"%{''.join(tokens)}%"
+
+    all_in_title = and_(*[Course.title.ilike(f"%{t}%") for t in tokens])
+    any_subject = or_(*[Course.subject.ilike(f"%{t}%") for t in tokens])
+
+    return case(
+        (or_(Course.id.ilike(squashed), Course.catalogue_id.ilike(squashed),
+             Course.title.ilike(joined)), 0),
+        (all_in_title, 1),
+        (any_subject, 2),
+        else_=3,
+    ).asc()
 
 
 def _level_char(level):
@@ -129,6 +220,8 @@ def _filter_clauses(
     class_type=None,
     has_open_seats=False,
     max_waitlist=None,
+    earliest_start=None,
+    has_history=False,
     offered_only=True,
 ):
     """
@@ -154,9 +247,7 @@ def _filter_clauses(
     if title is not None:
         clauses.append(Course.title.ilike(f"%{title}%"))
     if keywords is not None:
-        pattern = f"%{keywords}%"
-        clauses.append(or_(Course.title.ilike(pattern),
-                           Course.description.ilike(pattern)))
+        clauses.extend(_keyword_clauses(keywords))
 
     if credits is not None:
         # min == max for fixed-credit courses, so these two predicates cover
@@ -184,15 +275,21 @@ def _filter_clauses(
         clauses.append(Course.review_count >= min_reviews)
     if reviewed_only:
         clauses.append(Course.review_count > 0)
+    if has_history:
+        # Courses where seat movement is calculable -- the one thing no other
+        # McGill tool can answer.
+        clauses.append(Course.id.in_(select(_hist_agg(term).c.cid)))
 
     # One EXISTS for every section-level condition, so they describe the same
     # section rather than three unrelated ones.
     needs_section = (campus is not None or class_type is not None
-                     or has_open_seats or max_waitlist is not None)
+                     or has_open_seats or max_waitlist is not None
+                     or earliest_start is not None)
     if needs_section:
         clauses.append(_section_exists(
             term, campus=campus, class_type=class_type,
-            open_seats=has_open_seats, max_waitlist=max_waitlist))
+            open_seats=has_open_seats, max_waitlist=max_waitlist,
+            earliest_start=earliest_start))
     elif offered_only:
         clauses.append(_section_exists(term))
 
@@ -261,14 +358,12 @@ def _order_by(filters, sort_by):
     """
     order = []
 
-    # Tier 1 -- relevance. Only meaningful for a keyword search: a title hit
-    # beats a description mention, so "climate" stops surfacing "The Italian
-    # Renaissance". When a subject is named, every match is equally relevant
-    # and this tier is silent.
-    keywords = filters.get("keywords")
-    if keywords is not None:
-        order.append(
-            case((Course.title.ilike(f"%{keywords}%"), 0), else_=1).asc())
+    # Tier 1 -- relevance: code, then title, then subject, then description.
+    # Silent when nothing was typed, so a pure chip query is ranked by quality
+    # alone.
+    relevance = _relevance(filters.get("keywords"))
+    if relevance is not None:
+        order.append(relevance)
 
     # Tier 2 -- quality, or explicit sort intent.
     if sort_by == "easiest":
@@ -284,6 +379,17 @@ def _order_by(filters, sort_by):
     # Tier 3 -- tiebreak. More reviews means more confidence in the ordering
     # above it.
     order.append(Course.review_count.desc())
+
+    # Tier 4 -- the primary key, purely to make the ordering TOTAL.
+    #
+    # Not cosmetic: 166 groups of courses share both a rating and a review
+    # count exactly (GERM-200 and HIST-437 are both 5.00 from 76 reviews). With
+    # ties, Postgres gives no guarantee of relative order between two separate
+    # queries -- so with OFFSET pagination the same course could appear on page
+    # 1 and page 2 while another was skipped entirely. Observed, not theorised.
+    #
+    # Any unique column fixes it; the PK is the obvious one.
+    order.append(Course.id.asc())
     return order
 
 
@@ -311,6 +417,115 @@ def search_courses(session, *, limit=DEFAULT_LIMIT, offset=0, sort_by=None,
             .offset(offset)
             .limit(limit))
     return session.execute(stmt).scalars().all()
+
+
+def _seat_agg(term):
+    """
+    Per-course seat rollup for a term, as a subquery.
+
+    One grouped pass over sections rather than a scalar subquery per row: the
+    planner can hash-join it against whatever the filters leave behind.
+
+    OUTER join to current_seats so a section we haven't swept yet still counts
+    toward n_sections -- inner would make unswept sections vanish from the
+    count, which reads as "this course has fewer sections than it does".
+    """
+    return (select(Section.course_id.label("cid"),
+                   func.count().label("n_sections"),
+                   func.max(CurrentSeats.open_seats).label("max_open"),
+                   func.max(CurrentSeats.waitlist_count).label("max_wait"),
+                   # Newest sweep across the course's sections. Data age is what
+                   # makes a live number trustworthy -- "13 open" means nothing
+                   # without knowing whether that was measured an hour or a
+                   # month ago.
+                   func.max(CurrentSeats.observed_at).label("observed_at"))
+            .outerjoin(CurrentSeats, and_(CurrentSeats.crn == Section.crn,
+                                          CurrentSeats.term == Section.term))
+            .where(Section.term == term)
+            .group_by(Section.course_id)
+            .subquery())
+
+
+def _hist_agg(term):
+    """
+    Courses with at least two days of seat snapshots -- i.e. where movement is
+    calculable at all. HAVING, because the condition is on the aggregate.
+    """
+    return (select(Section.course_id.label("cid"))
+            .join(SeatDaily, and_(SeatDaily.crn == Section.crn,
+                                  SeatDaily.term == Section.term))
+            .where(Section.term == term)
+            .group_by(Section.course_id)
+            .having(func.count(distinct(SeatDaily.day)) >= 2)
+            .subquery())
+
+
+def _trend_agg(term):
+    """
+    Per-course seat movement: total seats gained or lost across all its
+    sections, and the span observed.
+
+    Two DISTINCT ON subqueries pick the first and last snapshot per section --
+    Postgres's DISTINCT ON keeps the first row of each group under the given
+    ORDER BY, which is the cheapest way to say "earliest" and "latest" without
+    a window function or a correlated max().
+
+    Summed per course rather than per section, because a card shows one number:
+    "this course lost 14 seats" is the useful claim, not fourteen separate
+    section deltas.
+    """
+    def edge(direction):
+        return (select(SeatDaily.crn, SeatDaily.term, SeatDaily.day,
+                       SeatDaily.open_seats)
+                .where(SeatDaily.term == term)
+                .distinct(SeatDaily.crn, SeatDaily.term)
+                .order_by(SeatDaily.crn, SeatDaily.term, direction)
+                .subquery())
+
+    first, last = edge(SeatDaily.day.asc()), edge(SeatDaily.day.desc())
+
+    return (select(
+                Section.course_id.label("cid"),
+                func.sum(last.c.open_seats - first.c.open_seats).label("seats_delta"),
+                func.max(last.c.day - first.c.day).label("trend_days"))
+            .join(first, and_(first.c.crn == Section.crn,
+                              first.c.term == Section.term))
+            .join(last, and_(last.c.crn == Section.crn,
+                             last.c.term == Section.term))
+            .where(Section.term == term)
+            .group_by(Section.course_id)
+            .subquery())
+
+
+def search_page(session, *, limit=DEFAULT_LIMIT, offset=0, sort_by=None,
+                **filters):
+    """
+    Like search_courses, but each row carries its seat rollup.
+
+    Returns (Course, n_sections, max_open, max_wait, has_history, seats_delta,
+    trend_days) rows. Separate
+    from search_courses so that function keeps its simple list[Course] contract
+    for scripts and tests; both share _filter_clauses and _order_by, so there is
+    one definition of what a filter means.
+    """
+    if sort_by is not None and sort_by not in SORT_OPTIONS:
+        raise ValueError(f"sort_by must be one of {SORT_OPTIONS}, got {sort_by!r}")
+
+    term = filters.get("term", DEFAULT_TERM)
+    seats, hist, trend = _seat_agg(term), _hist_agg(term), _trend_agg(term)
+
+    stmt = (select(Course,
+                   seats.c.n_sections, seats.c.max_open, seats.c.max_wait,
+                   seats.c.observed_at,
+                   hist.c.cid.isnot(None).label("has_history"),
+                   trend.c.seats_delta, trend.c.trend_days)
+            .outerjoin(seats, seats.c.cid == Course.id)
+            .outerjoin(hist, hist.c.cid == Course.id)
+            .outerjoin(trend, trend.c.cid == Course.id)
+            .where(*_filter_clauses(**filters))
+            .order_by(*_order_by(filters, sort_by))
+            .offset(offset).limit(limit))
+    return session.execute(stmt).all()
 
 
 def get_course(session, course_id):
@@ -346,6 +561,45 @@ def get_instructors(session, course_id, term):
                    CourseInstructor.term == term)
             .order_by(CourseInstructor.name))
     return list(session.execute(stmt).scalars().all())
+
+
+def get_requirements(session, course_id):
+    """
+    What this course requires, each marked as resolvable or external.
+
+    LEFT JOIN, not inner: 294 of 2,778 requirement codes name courses outside
+    the catalogue -- retired courses, other institutions, CEGEP objectives. An
+    inner join would silently drop them, so a course would appear to have fewer
+    prerequisites than the calendar says. `title` comes back NULL for those and
+    the caller renders them as plain text rather than a link.
+    """
+    stmt = (select(CoursePrerequisite.required_code, CoursePrerequisite.kind,
+                   Course.id, Course.title)
+            .outerjoin(Course, Course.catalogue_id == CoursePrerequisite.required_code)
+            .where(CoursePrerequisite.course_id == course_id)
+            .order_by(CoursePrerequisite.kind, CoursePrerequisite.required_code))
+    return session.execute(stmt).all()
+
+
+def get_unlocks(session, course_id, limit=24):
+    """
+    Courses that list this one as a requirement -- the catalogue's `leadingTo`,
+    derived rather than stored.
+
+    Matches on catalogue_id ("COMP250") because that is the shape the edge table
+    holds, not the dashed canonical id. Uses ix_prereq_reverse.
+    """
+    catalogue_id = select(Course.catalogue_id).where(
+        Course.id == course_id).scalar_subquery()
+
+    stmt = (select(Course.id, Course.title, Course.avg_rating, Course.review_count)
+            .join(CoursePrerequisite,
+                  CoursePrerequisite.course_id == Course.id)
+            .where(CoursePrerequisite.required_code == catalogue_id,
+                   CoursePrerequisite.kind == "prerequisite")
+            .order_by(Course.review_count.desc().nulls_last())
+            .limit(limit))
+    return session.execute(stmt).all()
 
 
 def filter_options(session, term):

@@ -1,0 +1,38 @@
+# One machine serving the API and the frontend. Montreal, because that is where
+# the students and the database are and a cross-continent round trip per search
+# is the one latency cost worth eliminating for free.
+app = "mcgill-course-finder"
+primary_region = "yul"
+
+[build]
+
+[env]
+  FRONTEND_DIR = "frontend"
+  # Same origin, so no CORS entry is needed here at all.
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  # Suspends when idle and wakes on the next request: a course search tool sees
+  # nothing at 4am, and this is what keeps the bill near zero. Resume is far
+  # faster than a cold boot because the machine's memory is restored.
+  auto_stop_machines = "suspend"
+  auto_start_machines = true
+  min_machines_running = 0
+  processes = ["app"]
+
+  [[http_service.checks]]
+    interval = "30s"
+    timeout = "5s"
+    grace_period = "10s"
+    method = "GET"
+    path = "/health"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"
+
+[deploy]
+  # Runs after the image is built and BEFORE traffic shifts, so a failed
+  # migration aborts the deploy instead of half-applying against live users.
+  release_command = "alembic upgrade head"

@@ -1,0 +1,1027 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>McGill Course Finder — ratings and live seat counts</title>
+<meta name="description" content="Search every McGill course by rating, difficulty and live seat availability.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23C8102E'/%3E%3Crect x='7' y='17' width='4.5' height='8' rx='1.2' fill='%23fff' opacity='.55'/%3E%3Crect x='13.75' y='12' width='4.5' height='13' rx='1.2' fill='%23fff' opacity='.8'/%3E%3Crect x='20.5' y='7' width='4.5' height='18' rx='1.2' fill='%23fff'/%3E%3C/svg%3E">
+<meta property="og:type" content="website">
+<meta property="og:title" content="McGill Course Finder">
+<meta property="og:description" content="Every McGill course — community ratings, difficulty, and live seat counts that update daily.">
+<!-- Relative now; set to an absolute https URL at deploy time or link previews
+     render blank. This page gets pasted into group chats, so it matters. -->
+<meta property="og:image" content="/og.png">
+<meta name="twitter:card" content="summary_large_image">
+
+<style>
+:root{
+  /* one sans for every word on the page, one mono for every number */
+  --sans:ui-sans-serif,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,
+         "Helvetica Neue",Arial,sans-serif;
+  --mono:ui-monospace,"JetBrains Mono","IBM Plex Mono","SF Mono",Menlo,
+         Consolas,monospace;
+
+  /* Four sizes, no in-betweens. Anything that wants a fifth is trying to be
+     important in a way the hierarchy already covers. */
+  --t-meta:13px;
+  --t-body:15px;
+  --t-title:17px;
+  --t-count:26px;
+
+  --bg:#F5F6F8;            /* page, one step down from the cards */
+  --surface:#FFFFFF;       /* cards, pure white */
+  --sunken:#EDEFF2;
+  --hair:#E5E8EC;
+  --hair-2:#D2D8DF;
+  --ink:#0F1419;
+  --ink-2:#3B4650;
+  --muted:#68737F;
+  --faint:#94A0AC;
+
+  --brand:#C8102E;         /* identity only: wordmark + active term */
+  /* Seat semantics. Validated on #FFFFFF: green/amber CVD dE 17.3 protan,
+     26.1 normal. Amber's own contrast is 2.38:1, which is why every badge
+     carries a text label rather than relying on the colour. Full is grey on
+     purpose -- full is an absence, not an alarm, and red is reserved. */
+  --open:#12805A;
+  --open-bg:#E9F5F0;
+  --tight:#8A6A12;         /* text-safe step of #D4A017 */
+  --tight-bg:#FAF3E0;
+  --full:#6E7A87;
+  --full-bg:#EFF1F4;
+
+  --wrap:1180px;
+  --ctl:32px;
+  --ease:150ms cubic-bezier(.22,.61,.36,1);
+  /* Shared by the column header and every row, so the numbers form real
+     columns down the page instead of each card guessing its own widths. */
+  --cols:minmax(0,1fr) 60px 82px 68px 156px;
+}
+
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --bg:#0E1116;
+    --surface:#161B22;
+    --sunken:#1C222B;
+    --hair:#232A34;
+    --hair-2:#303A46;
+    --ink:#E6EDF3;
+    --ink-2:#C2CCD6;
+    --muted:#8B949E;
+    --faint:#6E7681;
+    --brand:#FF5765;
+    /* Validated on #161B22: ALL CHECKS PASS, CVD dE 9.5 protan / 21.6 tritan */
+    --open:#35A87B;   --open-bg:#12271F;
+    --tight:#BD8B24;  --tight-bg:#241C0C;
+    --full:#7D8794;   --full-bg:#1B212A;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#0E1116;
+  --surface:#161B22;
+  --sunken:#1C222B;
+  --hair:#232A34;
+  --hair-2:#303A46;
+  --ink:#E6EDF3;
+  --ink-2:#C2CCD6;
+  --muted:#8B949E;
+  --faint:#6E7681;
+  --brand:#FF5765;
+  --open:#35A87B;   --open-bg:#12271F;
+  --tight:#BD8B24;  --tight-bg:#241C0C;
+  --full:#7D8794;   --full-bg:#1B212A;
+}
+
+*{box-sizing:border-box}
+body{
+  margin:0; background:var(--bg); color:var(--ink);
+  font:400 var(--t-body)/1.45 var(--sans);
+  -webkit-font-smoothing:antialiased;
+}
+:focus-visible{outline:2px solid var(--brand); outline-offset:2px; border-radius:2px}
+/* every digit in the same column occupies the same width */
+.mono{font-family:var(--mono); font-variant-numeric:tabular-nums}
+
+.wrap{max-width:var(--wrap); margin:0 auto; padding:0 22px}
+
+/* ── identity row (scrolls away) ──────────────────────────────────────── */
+/* wraps because the wordmark, term switch and theme button together need more
+   than a phone is wide */
+.top{display:flex; align-items:baseline; flex-wrap:wrap; gap:10px 18px;
+     padding:15px 0 13px}
+.mark{font-size:20px; font-weight:650; line-height:1; letter-spacing:-.01em;
+      white-space:nowrap}
+.mark em{font-style:normal; color:var(--brand)}
+.tag{font-size:var(--t-meta); color:var(--muted); white-space:nowrap}
+.tag b{color:var(--ink-2); font-weight:500}
+.spacer{margin-left:auto}
+
+/* live-data freshness. The single most trust-building element on the page:
+   a seat count with no age on it is just a number. */
+.fresh{display:inline-flex; align-items:center; gap:6px; font-family:var(--mono);
+       font-size:11px; color:var(--muted); white-space:nowrap}
+.dot{width:6px; height:6px; border-radius:50%; background:var(--open);
+     flex:none; position:relative}
+.dot::after{
+  content:""; position:absolute; inset:0; border-radius:50%;
+  background:var(--open); animation:pulse 2.4s ease-out infinite;
+}
+@keyframes pulse{
+  0%{transform:scale(1); opacity:.7}
+  70%,100%{transform:scale(2.8); opacity:0}
+}
+
+.seg{display:inline-flex; height:var(--ctl); border:1px solid var(--hair-2);
+     border-radius:6px; overflow:hidden; background:var(--surface)}
+.seg button{
+  display:inline-flex; align-items:center; font:500 var(--t-meta)/1 var(--sans);
+  padding:0 11px; border:0; cursor:pointer; background:none; color:var(--muted);
+  white-space:nowrap; transition:color var(--ease), background var(--ease);
+}
+.seg button + button{border-left:1px solid var(--hair-2)}
+.seg button:hover{color:var(--ink)}
+.seg button[aria-pressed="true"]{background:var(--ink); color:var(--surface)}
+.seg[data-brand] button[aria-pressed="true"]{background:var(--brand); color:#fff}
+.seglabel{font-family:var(--mono); font-size:10px; letter-spacing:.08em;
+          text-transform:uppercase; color:var(--faint)}
+.ghost{display:inline-flex; align-items:center; height:var(--ctl);
+       font:500 var(--t-meta)/1 var(--sans); padding:0 10px; cursor:pointer;
+       background:var(--surface); border:1px solid var(--hair-2);
+       border-radius:6px; color:var(--muted); transition:color var(--ease)}
+.ghost:hover{color:var(--ink)}
+
+/* ── sticky control deck ──────────────────────────────────────────────── */
+/* Filtering IS the product, so the controls never scroll out of reach. */
+.deck{position:sticky; top:0; z-index:30; background:var(--bg);
+      border-bottom:1px solid var(--hair)}
+
+.searchrow{position:relative; padding-bottom:10px}
+#q{
+  width:100%; height:44px; padding:0 96px 0 14px; font:400 var(--t-body) var(--sans);
+  color:var(--ink); background:var(--surface); border:1px solid var(--hair-2);
+  border-radius:7px; transition:border-color var(--ease);
+}
+#q::placeholder{color:var(--faint)}
+#q:focus{border-color:var(--ink-2); outline:none}
+.kbd{
+  position:absolute; right:38px; top:12px; display:flex; gap:3px;
+  pointer-events:none;
+}
+.kbd span{
+  font-family:var(--mono); font-size:10.5px; color:var(--faint);
+  border:1px solid var(--hair-2); border-radius:4px; padding:3px 5px; line-height:1;
+  background:var(--sunken);
+}
+#qclear{
+  position:absolute; right:10px; top:11px; width:22px; height:22px; border:0;
+  border-radius:50%; background:none; color:var(--faint); cursor:pointer;
+  font-size:15px; line-height:1;
+}
+#qclear:hover{background:var(--sunken); color:var(--ink)}
+
+.filters{display:flex; gap:8px; align-items:center; flex-wrap:wrap;
+         padding-bottom:11px}
+.chip{
+  display:inline-flex; align-items:center; height:var(--ctl);
+  font:500 var(--t-meta)/1 var(--sans); padding:0 12px; border-radius:6px;
+  border:1px solid var(--hair-2); background:var(--surface); color:var(--ink-2);
+  cursor:pointer; white-space:nowrap;
+  transition:background var(--ease), color var(--ease), border-color var(--ease);
+}
+.chip:hover{border-color:var(--ink-2); color:var(--ink)}
+/* active state inverts -- unmistakable, no second glance */
+.chip[aria-pressed="true"]{background:var(--ink); border-color:var(--ink);
+                           color:var(--surface)}
+
+/* Native select arrows ignore padding and sit where the platform likes, so we
+   draw our own in currentColor -- which a background image cannot do across
+   two themes. */
+.sel{position:relative; display:inline-flex}
+.sel select{
+  appearance:none; -webkit-appearance:none; height:var(--ctl);
+  font:500 var(--t-meta)/1 var(--sans); padding:0 28px 0 11px; border-radius:6px;
+  border:1px solid var(--hair-2); background:var(--surface); color:var(--ink-2);
+  cursor:pointer; max-width:190px; text-overflow:ellipsis;
+  transition:border-color var(--ease), color var(--ease);
+}
+.sel select:hover{border-color:var(--ink-2); color:var(--ink)}
+.sel::after{
+  content:""; position:absolute; right:11px; top:50%; width:5px; height:5px;
+  border-right:1.6px solid currentColor; border-bottom:1.6px solid currentColor;
+  transform:translateY(-70%) rotate(45deg); color:var(--muted);
+  pointer-events:none;
+}
+.sel[data-set="1"] select{border-color:var(--ink); color:var(--ink)}
+.sortwrap{display:flex; align-items:center; gap:7px}
+
+/* ── column header: the labels live here ONCE, not under every row ─────── */
+.thead{
+  display:grid; grid-template-columns:var(--cols); gap:16px; align-items:baseline;
+  padding:0 15px 9px;
+}
+.thead > span:not(.tcount){
+  font-family:var(--mono); font-size:10px; letter-spacing:.09em;
+  text-transform:uppercase; color:var(--faint); text-align:right;
+}
+.tcount{display:flex; align-items:baseline; gap:8px; flex-wrap:wrap}
+.big{font-size:var(--t-count); font-weight:650; line-height:1; letter-spacing:-.02em;
+     font-family:var(--mono); font-variant-numeric:tabular-nums}
+/* one quick tick when the number changes, never a rolling counter */
+.big[data-tick]{animation:tick var(--ease)}
+@keyframes tick{from{opacity:0; transform:translateY(-3px)} to{opacity:1}}
+#sub{font-size:var(--t-meta); color:var(--muted)}
+.shown{font-family:var(--mono); font-size:11.5px; color:var(--faint);
+       font-variant-numeric:tabular-nums}
+
+/* ── the list ─────────────────────────────────────────────────────────── */
+main{padding-bottom:80px}
+main.wrap{padding-top:12px}
+.list{display:flex; flex-direction:column; gap:5px;
+      transition:opacity var(--ease)}
+.list[data-loading="1"]{opacity:.45}
+
+.card{
+  display:grid; grid-template-columns:var(--cols); gap:16px; align-items:center;
+  width:100%; text-align:left; padding:11px 15px; cursor:pointer;
+  background:var(--surface); color:inherit; font:inherit;
+  border:1px solid var(--hair); border-left:2px solid var(--hair);
+  border-radius:7px;
+  transition:border-color var(--ease), background var(--ease),
+             box-shadow var(--ease);
+}
+/* the only per-row colour: seat state on the leading edge */
+.card[data-st="open"]{border-left-color:var(--open)}
+.card[data-st="tight"]{border-left-color:var(--tight)}
+.card[data-st="full"]{border-left-color:var(--full)}
+/* no lift, no scale -- the border darkens and a whisper of shadow appears */
+.card:hover{border-color:var(--hair-2); box-shadow:0 1px 3px rgba(0,0,0,.06)}
+.card[aria-expanded="true"]{border-color:var(--hair-2); background:var(--sunken)}
+
+/* min-width:0 lets the ellipsis actually engage -- a grid item defaults to
+   min-content width and would otherwise refuse to shrink below the title. */
+.c-main{min-width:0}
+.c-title, .c-meta{display:block}
+.c-title{font-size:var(--t-title); font-weight:550; line-height:1.25;
+         letter-spacing:-.01em; overflow:hidden; text-overflow:ellipsis;
+         white-space:nowrap}
+.c-meta{font-size:var(--t-meta); color:var(--muted); margin-top:2px;
+        overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+/* the code is an identifier, not a headline: mono, small, quiet */
+.c-code{font-family:var(--mono); font-size:12px; color:var(--ink-2);
+        font-weight:500; letter-spacing:-.01em}
+
+.num{
+  font-family:var(--mono); font-size:var(--t-body); text-align:right;
+  font-variant-numeric:tabular-nums; color:var(--ink); position:relative;
+}
+.num[data-empty="1"]{color:var(--faint)}
+/* Rating out of 5 as a hairline bar, revealed on hover: comparing 4.98 to 4.31
+   down a column is arithmetic; comparing two bar lengths is not. */
+.rbar{
+  position:absolute; right:0; bottom:-6px; height:2px; width:38px;
+  background:var(--hair); border-radius:1px; opacity:0;
+  transition:opacity var(--ease);
+}
+.rbar i{position:absolute; inset:0 auto 0 0; background:var(--muted);
+        border-radius:1px}
+.card:hover .rbar{opacity:1}
+
+.seatcell{display:flex; justify-content:flex-end; align-items:center; gap:7px}
+.badge{
+  display:inline-flex; align-items:center; gap:6px; font-family:var(--mono);
+  font-size:12px; font-variant-numeric:tabular-nums; padding:4px 9px;
+  border-radius:5px; border:1px solid; white-space:nowrap;
+}
+.badge b{font-weight:600}
+.badge[data-st="open"]{color:var(--open); background:var(--open-bg);
+                       border-color:color-mix(in oklab,var(--open) 28%,transparent)}
+.badge[data-st="tight"]{color:var(--tight); background:var(--tight-bg);
+                        border-color:color-mix(in oklab,var(--tight) 28%,transparent)}
+.badge[data-st="full"]{color:var(--full); background:var(--full-bg);
+                       border-color:color-mix(in oklab,var(--full) 28%,transparent)}
+.badge .dot{width:5px; height:5px; background:currentColor}
+.badge .dot::after{background:currentColor}
+.fast{font-family:var(--mono); font-size:10.5px; color:var(--tight);
+      white-space:nowrap}
+
+/* skeletons mirror the row geometry, so nothing jumps when data lands */
+.skel{
+  display:grid; grid-template-columns:var(--cols); gap:16px; align-items:center;
+  padding:11px 15px; background:var(--surface); border:1px solid var(--hair);
+  border-left:2px solid var(--hair); border-radius:7px;
+}
+.skel i{display:block; height:11px; border-radius:3px; background:var(--sunken);
+        animation:breathe 1.4s ease-in-out infinite}
+.skel i.t{height:15px; width:min(60%,320px)}
+.skel i.m{margin-top:6px; width:min(38%,210px)}
+.skel span{justify-self:end; display:block; height:11px; width:100%;
+           border-radius:3px; background:var(--sunken);
+           animation:breathe 1.4s ease-in-out infinite}
+@keyframes breathe{0%,100%{opacity:1} 50%{opacity:.5}}
+
+.empty{padding:44px 16px; text-align:center; color:var(--muted);
+       background:var(--surface); border:1px solid var(--hair); border-radius:7px}
+.empty b{display:block; color:var(--ink); font-size:var(--t-title);
+         font-weight:600; margin-bottom:5px}
+
+/* ── pagination ───────────────────────────────────────────────────────── */
+.pager{display:flex; align-items:baseline; justify-content:center; gap:9px;
+       padding:20px 0 0}
+.pbtn{display:inline-flex; align-items:center; height:var(--ctl);
+      font:500 var(--t-meta)/1 var(--sans); padding:0 13px; cursor:pointer;
+      background:var(--surface); border:1px solid var(--hair-2);
+      border-radius:6px; color:var(--ink-2); transition:border-color var(--ease)}
+.pbtn:hover:not(:disabled){border-color:var(--ink-2)}
+.pbtn:disabled{opacity:.4; cursor:default}
+.pnum{font-family:var(--mono); font-size:12px; color:var(--muted);
+      font-variant-numeric:tabular-nums; min-width:112px; text-align:center}
+.pnum b{color:var(--ink); font-weight:600}
+
+/* ── detail panel ─────────────────────────────────────────────────────── */
+.detail{
+  display:grid; grid-template-columns:1.15fr 1fr; gap:26px;
+  padding:18px; margin-top:5px; background:var(--surface);
+  border:1px solid var(--hair-2); border-radius:7px;
+}
+.detail h4{font-family:var(--mono); font-size:10px; letter-spacing:.09em;
+           text-transform:uppercase; color:var(--faint); margin:0 0 7px;
+           font-weight:500}
+.detail h4 ~ h4{margin-top:15px}
+.blurb{font-size:14px; color:var(--ink-2); line-height:1.55}
+.prose{font-size:13.5px; color:var(--ink-2); line-height:1.5}
+.note{font-size:12.5px; color:var(--muted); margin-top:7px; padding-left:9px;
+      border-left:2px solid var(--hair-2)}
+.reqs{display:flex; flex-wrap:wrap; gap:5px; margin-top:7px}
+.req{font-family:var(--mono); font-size:11.5px; padding:3px 7px; border-radius:4px;
+     border:1px solid var(--hair-2); color:var(--ink-2); background:var(--sunken)}
+.req[data-link="1"]{cursor:pointer; border-color:var(--hair-2)}
+.req[data-link="1"]:hover{border-color:var(--ink-2); color:var(--ink)}
+.req[data-ext="1"]{opacity:.6; font-style:italic}
+.glabel{font-family:var(--mono); font-size:10px; letter-spacing:.08em;
+        text-transform:uppercase; color:var(--faint); align-self:center;
+        margin-right:3px}
+.movebox{display:flex; align-items:center; gap:13px; margin-top:4px}
+.moveline{font-size:13px; color:var(--ink-2)}
+.moveline b{font-family:var(--mono); font-size:14px}
+.moveline b[data-dir="down"]{color:var(--tight)}
+.moveline b[data-dir="up"]{color:var(--open)}
+.movesub{font-family:var(--mono); font-size:11px; color:var(--faint); margin-top:3px}
+
+.grid{display:grid; grid-template-columns:30px repeat(5,1fr); gap:3px;
+      margin-bottom:13px}
+.gh{font-family:var(--mono); font-size:10px; color:var(--faint);
+    text-align:center; text-transform:uppercase; letter-spacing:.05em}
+.ghours{position:relative; height:var(--gh)}
+.ghours span{position:absolute; right:4px; transform:translateY(-50%);
+             font-family:var(--mono); font-size:9.5px; color:var(--faint)}
+.gcol{position:relative; height:var(--gh); background:var(--sunken);
+      border-radius:3px}
+.blk{position:absolute; left:1px; right:1px; border-radius:3px; overflow:hidden;
+     font-family:var(--mono); font-size:9px; line-height:1.1; padding:2px 3px;
+     color:#fff; background:var(--full)}
+.blk[data-st="open"]{background:var(--open)}
+.blk[data-st="tight"]{background:var(--tight)}
+
+.stab{width:100%; border-collapse:collapse; font-size:12.5px}
+.stab th{font-family:var(--mono); font-size:9.5px; letter-spacing:.08em;
+         text-transform:uppercase; color:var(--faint); text-align:left;
+         font-weight:500; padding:0 0 5px}
+.stab th:nth-child(n+3), .stab td:nth-child(n+3){text-align:right;
+         font-family:var(--mono); font-variant-numeric:tabular-nums}
+.stab td{padding:5px 0; border-top:1px solid var(--hair); vertical-align:top;
+         color:var(--ink-2)}
+.when{font-family:var(--mono); font-size:11.5px}
+.room{font-family:var(--mono); font-size:10px; color:var(--faint)}
+.catlink{font-size:13px; color:var(--ink); text-decoration:none;
+         border-bottom:1px solid var(--hair-2)}
+.catlink:hover{border-color:var(--ink)}
+
+/* ── footer ───────────────────────────────────────────────────────────── */
+footer{border-top:1px solid var(--hair); padding:22px 0 40px;
+       font-size:12.5px; color:var(--muted)}
+footer .frow{display:flex; gap:20px; flex-wrap:wrap; align-items:baseline}
+footer b{color:var(--ink-2); font-weight:550}
+footer a{color:var(--ink-2); text-decoration:none;
+         border-bottom:1px solid var(--hair-2)}
+footer a:hover{color:var(--ink)}
+.sources{font-size:12px; color:var(--faint); margin-top:7px; line-height:1.6}
+
+@media (max-width:960px){
+  /* the numeric columns stop being columns and become inline facts */
+  :root{--cols:minmax(0,1fr) auto}
+  .thead > span:not(.tcount){display:none}
+  .card, .skel, .thead{gap:12px}
+  .card{align-items:start}
+  .num{display:none}
+  .seatcell{flex-direction:column; align-items:flex-end; gap:4px}
+  .inline-stats{display:flex}
+  .detail{grid-template-columns:1fr; gap:18px}
+  .tag{display:none}
+}
+@media (min-width:961px){.inline-stats{display:none}}
+@media (max-width:560px){
+  .kbd{display:none}
+  .fresh{order:9}          /* freshness reads better under the controls here */
+  #q{padding-right:38px}
+  .skel span{display:none}
+}
+@media (prefers-reduced-motion:reduce){
+  *{transition:none!important; animation:none!important}
+}
+</style>
+
+</head>
+<body>
+<header>
+  <div class="wrap top">
+    <div class="mark">McGill <em>Course Finder</em></div>
+    <div class="tag">Ratings, difficulty and <b>live seat counts</b> for every course.</div>
+    <div class="spacer"></div>
+    <span class="fresh" id="fresh" hidden><span class="dot"></span><span id="freshtxt"></span></span>
+    <div class="seg" data-brand id="terms" role="group" aria-label="Term">
+      <button type="button" data-term="202609" aria-pressed="true">Fall 2026</button>
+      <button type="button" data-term="202701" aria-pressed="false">Winter 2027</button>
+    </div>
+    <button class="ghost" id="theme" type="button">Theme</button>
+  </div>
+</header>
+
+<!-- Sticky: search, filters, sort and the column header. Filtering is the
+     product, so none of it scrolls away. -->
+<div class="deck">
+  <div class="wrap">
+    <div class="searchrow">
+      <input id="q" type="search" autocomplete="off" spellcheck="false"
+             placeholder="Search anything — comp 250, calculus, italian, climate, machine learning"
+             aria-label="Search courses">
+      <span class="kbd"><span>⌘</span><span>K</span></span>
+      <button id="qclear" type="button" aria-label="Clear search">×</button>
+    </div>
+
+    <div class="filters" id="filters">
+      <button class="chip" data-f="seats" data-v="1" aria-pressed="false"
+              type="button">Has seats</button>
+
+      <div class="seg" role="group" aria-label="Credits">
+        <button data-f="credits" data-v="3" aria-pressed="false" type="button">3 cr</button>
+        <button data-f="credits" data-v="4" aria-pressed="false" type="button">4 cr</button>
+      </div>
+
+      <div class="seg" role="group" aria-label="Course level">
+        <button data-f="level" data-v="100" aria-pressed="false" type="button">100</button>
+        <button data-f="level" data-v="200" aria-pressed="false" type="button">200</button>
+        <button data-f="level" data-v="300" aria-pressed="false" type="button">300</button>
+        <button data-f="level" data-v="400" aria-pressed="false" type="button">400</button>
+      </div>
+
+      <span class="sel"><select id="fac" aria-label="Faculty">
+        <option value="">Any faculty</option>
+      </select></span>
+
+      <span class="sel"><select id="start" aria-label="Earliest class start">
+        <option value="">Any start time</option>
+        <option value="540">Starts 9am or later</option>
+        <option value="600">Starts 10am or later</option>
+        <option value="660">Starts 11am or later</option>
+        <option value="720">Starts noon or later</option>
+        <option value="840">Starts 2pm or later</option>
+      </select></span>
+
+      <span class="spacer"></span>
+      <div class="sortwrap">
+        <span class="seglabel">Sort</span>
+        <div class="seg" role="group" aria-label="Sort">
+          <button data-s="rating"  aria-pressed="true"  type="button">Best rated</button>
+          <button data-s="easiest" aria-pressed="false" type="button">Easiest</button>
+          <button data-s="popular" aria-pressed="false" type="button">Most reviewed</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Column labels appear once here instead of under all 25 rows. -->
+    <div class="thead">
+      <span class="tcount">
+        <span class="big" id="n">—</span><span id="sub">courses</span><span class="shown" id="shown"></span>
+      </span>
+      <span>Rating</span>
+      <span>Difficulty</span>
+      <span>Reviews</span>
+      <span>Seats</span>
+    </div>
+  </div>
+</div>
+
+<main class="wrap">
+  <div class="list" id="rows"></div>
+  <nav class="pager" id="pager" aria-label="Pagination" hidden>
+    <button class="pbtn" id="prev" type="button">&larr; Previous</button>
+    <span class="pnum" id="pnum"></span>
+    <button class="pbtn" id="next" type="button">Next &rarr;</button>
+  </nav>
+</main>
+
+<footer>
+  <div class="wrap">
+    <div class="frow">
+      <div><b>McGill Course Finder</b> — built by Oliver McDonald ·
+        <a href="https://github.com/olivermcdonald1/CourseFinder" target="_blank"
+           rel="noopener">source on GitHub</a></div>
+      <div class="spacer"></div>
+      <div>Not affiliated with McGill University.</div>
+    </div>
+    <div class="sources">
+      Course data from the McGill course catalogue · ratings from
+      <a href="https://mcgill.courses" target="_blank" rel="noopener">mcgill.courses</a> ·
+      seats and waitlists from Visual Schedule Builder, swept daily.
+      Ratings are weighted by review count, so one five-star review doesn't
+      outrank four hundred.
+    </div>
+  </div>
+</footer>
+
+<script>
+/* Every filter change is a request. The server owns filtering, counting,
+   ranking and pagination -- the client owns nothing but the query string.
+   That's why the counts here are always the truth about all 10,156 courses
+   rather than about whatever sample happened to be baked in. */
+const PAGE = 25;   // per page
+/* Dev serves this file from a separate static server on :5173, so the API is a
+   different origin and needs an absolute URL. Anywhere else, FastAPI serves the
+   page itself -- same origin, so "" is right and there is no CORS to configure. */
+const API = location.port === "5173" ? "http://localhost:8100" : "";
+const $ = (s, r = document) => r.querySelector(s);
+const $$ = (s, r = document) => [...r.querySelectorAll(s)];
+const fmt = n => n == null ? "—" : n.toLocaleString();
+const r2 = n => n == null ? "—" : n.toFixed(2);
+// "1 seat", not "1 seats". abs() because VSB reports negative open_seats for
+// over-enrolled sections.
+const plural = (n, w) => `${fmt(n)} ${w}${Math.abs(n) === 1 ? "" : "s"}`;
+const esc = s => String(s ?? "").replace(/[&<>"]/g,
+  c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+const state = { credits: null, level: null, seats: 0, start: "", faculty: "",
+                sort: "rating", open: null, offset: 0, q: "", term: "202609" };
+
+/* One box, three meanings -- the same shape the deleted regex tier used.
+   "COMP 250" is a lookup, "COMP" is a subject browse, anything else is a topic.
+   Guessing here rather than making the user pick a mode is the whole point. */
+const CODE = /^([A-Za-z]{3,4})[\s-]?(\d{3}[A-Za-z0-9]{0,2})$/;
+
+function searchParams(q) {
+  const t = q.trim();
+  if (!t) return {};
+  const m = t.match(CODE);
+  // An exact course code is a lookup, so let unreviewed and graduate courses
+  // through -- hiding the thing someone typed by name would be wrong.
+  if (m) return { course_id: `${m[1].toUpperCase()}-${m[2].toUpperCase()}`,
+                  reviewed_only: "false", undergrad_only: "false" };
+  // Everything else goes to the server as keywords. It tokenises (AND over
+  // words, OR over fields) and ranks code > title > subject > description, so
+  // "math", "calc", "intro comp" and "machine learning" all work without the
+  // client guessing at a mode.
+  return { keywords: t, reviewed_only: "false" };
+}
+
+function queryString() {
+  const p = new URLSearchParams({ undergrad_only: "true", limit: String(PAGE),
+                                  term: state.term });
+  for (const [k, v] of Object.entries(searchParams(state.q))) p.set(k, v);
+  if (state.credits)  p.set("credits", state.credits);
+  if (state.level)  { p.set("min_level", state.level); p.set("max_level", state.level); }
+  if (state.seats)    p.set("has_open_seats", "true");
+  if (state.start)    p.set("earliest_start", state.start);
+  if (state.faculty)  p.set("faculty", state.faculty);
+  if (state.offset)   p.set("offset", state.offset);
+  p.set("sort_by", state.sort);
+  return p.toString();
+}
+
+/* Seat state. VSB reports negative open_seats for over-enrolled sections,
+   so "open" is strictly > 0 -- otherwise -4 would read as availability. */
+const seatState = c =>
+  (c.open_seats ?? 0) > 0 ? "open"
+: (c.waitlist_count ?? 0) > 0 ? "tight" : "full";
+
+/* Data age in words. A live number with no age on it is just a number, and
+   "23:11:18Z" is not something anyone reads. */
+function ago(iso) {
+  if (!iso) return null;
+  const mins = Math.round((Date.now() - new Date(iso).getTime()) / 60000);
+  if (mins < 2) return "just now";
+  if (mins < 60) return `${mins} min ago`;
+  const h = Math.round(mins / 60);
+  if (h < 24) return `${h}h ago`;
+  const d = Math.round(h / 24);
+  return `${d}d ago`;
+}
+
+/* Single-series sparkline: baseline, area fill, 2px line, emphasized endpoint.
+   No legend -- one series, and the heading names it. */
+function spark(vals, colour, w = 120, h = 30) {
+  if (!vals || vals.length < 2) return "";
+  const p = 3, lo = Math.min(...vals), hi = Math.max(...vals), span = hi - lo || 1;
+  const pts = vals.map((v, i) => [
+    p + i * (w - 2 * p) / (vals.length - 1),
+    h - p - (v - lo) / span * (h - 2 * p)]);
+  const line = pts.map(q => q.map(n => n.toFixed(1)).join(",")).join(" ");
+  const [ex, ey] = pts.at(-1);
+  return `<svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" aria-hidden="true">
+    <line x1="${p}" y1="${h - p}" x2="${w - p}" y2="${h - p}" stroke="var(--hair)"/>
+    <polygon points="${p},${h - p} ${line} ${w - p},${h - p}" fill="${colour}" opacity=".13"/>
+    <polyline points="${line}" fill="none" stroke="${colour}" stroke-width="2"
+      stroke-linejoin="round" stroke-linecap="round"/>
+    <circle cx="${ex.toFixed(1)}" cy="${ey.toFixed(1)}" r="3" fill="${colour}"/></svg>`;
+}
+
+/* Seats disappearing at >1.5/day is worth flagging; below that it's noise at a
+   two-day sample. Shows the runway, not just the rate, because "12 open" and
+   "-6/day" only mean something together. */
+function fastBadge(c) {
+  const rate = c.seats_per_day;
+  if (rate == null || rate > -1.5) return "";
+  const left = c.open_seats ?? 0;
+  const days = left > 0 ? Math.max(1, Math.round(left / Math.abs(rate))) : 0;
+  return `<span class="fast">&darr;${Math.abs(rate)}/day${
+    days ? ` · ~${days}d` : ""}</span>`;
+}
+
+/* A week grid for one course's sections. Not a schedule builder -- it answers
+   "when does this thing actually meet", which is the question you have while
+   deciding, and it needs no selection state or conflict logic to do it.
+   Weekdays only: 7,546 Fall sections, none on a weekend. */
+const GRID_DAYS = [2, 3, 4, 5, 6];
+const GRID_LABEL = { 2: "Mon", 3: "Tue", 4: "Wed", 5: "Thu", 6: "Fri" };
+
+function weekGrid(sections) {
+  const meets = [];
+  for (const s of sections) {
+    for (const m of s.meetings || []) {
+      if (m.start_min == null || !GRID_DAYS.includes(m.day)) continue;
+      meets.push({ ...m, s });
+    }
+  }
+  if (!meets.length) return "";
+
+  // Bound the canvas to the actual day, not 00:00-24:00, or every block is a
+  // sliver at the bottom of a mostly empty column.
+  const lo = Math.floor(Math.min(...meets.map(m => m.start_min)) / 60) * 60;
+  const hi = Math.ceil(Math.max(...meets.map(m => m.end_min ?? m.start_min + 60)) / 60) * 60;
+  const span = Math.max(60, hi - lo);
+  const H = Math.min(300, Math.max(140, span * 0.42));
+  const y = min => ((min - lo) / span) * 100;
+
+  const hours = [];
+  for (let m = lo; m <= hi; m += 60) {
+    hours.push(`<span style="top:${y(m)}%">${
+      (Math.floor(m / 60) % 12) || 12}${Math.floor(m / 60) < 12 ? "a" : "p"}</span>`);
+  }
+
+  const cols = GRID_DAYS.map(day => {
+    const blocks = meets.filter(m => m.day === day).map(m => {
+      const st = (m.s.open_seats ?? 0) > 0 ? "open"
+               : (m.s.waitlist_count ?? 0) > 0 ? "tight" : "full";
+      const top = y(m.start_min);
+      const h = Math.max(7, y(m.end_min ?? m.start_min + 60) - top);
+      return `<div class="blk" data-st="${st}" style="top:${top}%;height:${h}%"
+        title="${esc(m.s.type_of_class)} ${esc(m.s.section_no)} · ${esc(m.location)}"
+        >${esc(m.s.type_of_class)} ${esc(m.s.section_no)}</div>`;
+    }).join("");
+    return `<div class="gcol">${blocks}</div>`;
+  }).join("");
+
+  return `<h4>When it meets</h4>
+    <div class="grid" style="--gh:${H}px">
+      <div></div>${GRID_DAYS.map(d => `<div class="gh">${GRID_LABEL[d]}</div>`).join("")}
+      <div class="ghours" style="--gh:${H}px">${hours.join("")}</div>${cols}
+    </div>`;
+}
+
+/* One row of the table. The column labels live once in .thead, so nothing here
+   repeats them -- that alone took ~35px of vertical noise off every course. */
+function rowHTML(c) {
+  const st = seatState(c);
+  const age = ago(c.observed_at);
+  const seat = st === "open"  ? `<b>${fmt(c.open_seats)}</b> open`
+             : st === "tight" ? `<b>${fmt(c.waitlist_count)}</b> waitlisted`
+             :                  `full`;
+  // The live dot belongs only on a number that is actually moving.
+  const dot = st === "open" ? `<span class="dot"></span>` : "";
+  const tip = age ? `Seats measured ${age}` : "Not yet observed this term";
+  const rating = c.avg_rating;
+
+  return `
+  <button class="card" data-st="${st}" data-id="${c.id}" type="button"
+          aria-expanded="${state.open === c.id}">
+    <span class="c-main">
+      <span class="c-title">${esc(c.title)}</span>
+      <span class="c-meta"><span class="c-code">${esc(c.id)}</span>${
+        c.credits_text ? ` · ${esc(c.credits_text)} cr` : ""} · ${
+        esc(c.department || c.faculty || "")}${
+        c.n_sections ? ` · ${plural(c.n_sections, "section")}` : ""}<span
+        class="inline-stats">${rating != null
+          ? `${r2(rating)} rating · ${fmt(c.review_count)} reviews` : ""}</span></span>
+    </span>
+    <span class="num" data-empty="${rating == null ? 1 : 0}">${r2(rating)}${
+      rating != null ? `<span class="rbar"><i style="width:${
+        (rating / 5 * 100).toFixed(1)}%"></i></span>` : ""}</span>
+    <span class="num" data-empty="${c.avg_difficulty == null ? 1 : 0}">${r2(c.avg_difficulty)}</span>
+    <span class="num" data-empty="${c.review_count ? 0 : 1}">${fmt(c.review_count)}</span>
+    <span class="seatcell">
+      ${fastBadge(c)}
+      <span class="badge" data-st="${st}" title="${tip}">${dot}${seat}</span>
+    </span>
+  </button>
+  <div class="detailslot" id="d-${c.id}">${
+    state.open === c.id ? `<div class="detail"><div class="blurb">Loading…</div></div>` : ""}</div>`;
+}
+
+/* Skeletons match the row geometry exactly, so the list does not jump when the
+   data lands. Only on a cold start -- a refilter fades the existing rows
+   instead, which keeps the page from flashing empty on every keystroke. */
+const skeleton = n => Array.from({ length: n }, () => `
+  <div class="skel"><div><i class="t"></i><i class="m"></i></div>
+    <span></span><span></span><span></span><span></span></div>`).join("");
+
+/* Offset pagination, because the API already speaks limit/offset and the
+   ordering is stable -- page 2 is genuinely ranks 26-50 of the same sort, not
+   a fresh guess. Deep offsets get slower (Postgres still walks the skipped
+   rows) but nobody pages to 800. */
+function renderPager(d) {
+  const pager = $("#pager");
+  const pages = Math.max(1, Math.ceil(d.total / d.limit));
+  const page = Math.floor(d.offset / d.limit) + 1;
+
+  pager.hidden = d.total <= d.limit;
+  $("#pnum").innerHTML = `Page <b>${page}</b> of ${fmt(pages)}`;
+  $("#prev").disabled = page <= 1;
+  $("#next").disabled = page >= pages;
+
+  const from = d.total ? d.offset + 1 : 0;
+  const to = Math.min(d.offset + d.limit, d.total);
+  $("#shown").textContent = d.total ? `showing ${from}–${to}` : "";
+}
+
+function turnPage(delta) {
+  const next = state.offset + delta * PAGE;
+  if (next < 0) return;
+  state.offset = next;
+  state.open = null;                    // a detail panel from page 1 is stale
+  load().then(() => window.scrollTo({ top: 0, behavior: "smooth" }));
+}
+
+/* Freshness, computed from the newest sweep in the result set rather than
+   asserted. If the collector stops running, this says so on its own. */
+function renderFresh(courses) {
+  const stamps = courses.map(c => c.observed_at).filter(Boolean).sort();
+  const el = $("#fresh");
+  el.hidden = !stamps.length;
+  if (stamps.length) $("#freshtxt").textContent = `seats ${ago(stamps.at(-1))}`;
+}
+
+let lastTotal = null;
+function renderCount(d) {
+  const n = $("#n");
+  n.textContent = fmt(d.total);
+  // A quick tick only when the number actually changed -- animating on every
+  // render would make paging look like a slot machine.
+  if (lastTotal !== null && lastTotal !== d.total) {
+    n.removeAttribute("data-tick"); void n.offsetWidth; n.setAttribute("data-tick", "");
+  }
+  lastTotal = d.total;
+  const termLabel = state.term === "202609" ? "Fall 2026" : "Winter 2027";
+  $("#sub").textContent = `${d.total === 1 ? "course" : "courses"} in ${termLabel}`
+    + (state.q ? ` matching “${state.q}”` : "");
+}
+
+/* Every response carries the sequence number of the request that asked for it.
+   Two clicks in quick succession are two in-flight fetches, and nothing
+   guarantees they come back in order -- so an older, slower response can land
+   last and paint stale counts over fresh ones. Anything but the newest is
+   dropped. */
+let seq = 0;
+
+async function load() {
+  const mine = ++seq;
+  const rows = $("#rows");
+  if (!rows.children.length) rows.innerHTML = skeleton(8);
+  rows.dataset.loading = "1";
+  rows.setAttribute("aria-busy", "true");
+
+  const res = await fetch(`${API}/courses?${queryString()}`);
+  if (mine !== seq) return;
+  if (!res.ok) {
+    rows.innerHTML = `<div class="empty"><b>API error ${res.status}</b>
+      Is uvicorn running on ${API || location.origin}?</div>`;
+    delete rows.dataset.loading;
+    return;
+  }
+  const d = await res.json();
+  if (mine !== seq) return;
+
+  renderCount(d);
+  renderFresh(d.courses);
+  rows.innerHTML = d.courses.length
+    ? d.courses.map(rowHTML).join("")
+    : `<div class="empty"><b>Nothing matches</b>Try removing a filter.</div>`;
+  renderPager(d);
+  delete rows.dataset.loading;
+  rows.removeAttribute("aria-busy");
+}
+
+/* Detail is fetched on demand, not preloaded: 10,156 detail payloads would be
+   an N+1 over HTTP. Sparklines need per-section history, so they live here. */
+async function loadDetail(id) {
+  const slot = $(`#d-${id}`);
+  if (!slot) return;
+  const detail = await (await fetch(`${API}/courses/${id}`)).json();
+  const secs = detail.sections || [];
+  let sparkHTML = "";
+  const tracked = secs[0];
+  if (tracked) {
+    const mv = await (await fetch(`${API}/sections/${tracked.crn}/movement`)).json();
+    const series = (mv.history || []).map(h => h.open_seats).filter(v => v != null);
+    const ob = mv.observed;
+    if (series.length >= 2 && ob) {
+      // `observed` spans the days we actually have, so it is populated as soon
+      // as a second snapshot exists. The view's fixed 7-day columns are NULL
+      // for any section first seen less than a week ago -- which is most of
+      // them -- and a card that says "tracked" then shows nothing is worse
+      // than showing no badge at all.
+      const d = ob.open_delta ?? 0;
+      const dir = d < 0 ? "down" : d > 0 ? "up" : "flat";
+      const unit = Math.abs(d) === 1 ? "seat" : "seats";
+      const verb = d < 0 ? `${unit} taken` : d > 0 ? `${unit} freed` : "no change";
+      const rate = ob.open_per_day && d
+        ? `${Math.abs(ob.open_per_day)} per day` : "";
+      const left = tracked.open_seats;
+      const eta = (d < 0 && ob.open_per_day && left > 0)
+        ? ` · about ${Math.max(1, Math.round(left / Math.abs(ob.open_per_day)))} days left at this rate`
+        : "";
+      sparkHTML = `<h4>Seats over time · section ${esc(tracked.section_no)}</h4>
+        <div class="movebox">
+          ${spark(series, "var(--open)", 150, 42)}
+          <div>
+            <div class="moveline"><b data-dir="${dir}">${d > 0 ? "+" : ""}${d}</b> ${verb}
+              over ${ob.days} day${ob.days === 1 ? "" : "s"}</div>
+            <div class="movesub">${ob.from_day} → ${ob.to_day}${rate ? " · " + rate : ""}${eta}</div>
+          </div>
+        </div>`;
+    }
+  }
+  const reqs = detail.requirements || [];
+  const pre = reqs.filter(r => r.kind === "prerequisite");
+  const co  = reqs.filter(r => r.kind === "corequisite");
+  const chip = r => `<span class="req" data-link="${r.course_id ? 1 : 0}"
+      data-ext="${r.course_id ? 0 : 1}" data-goto="${r.course_id || ""}"
+      title="${esc(r.title || "not in the catalogue")}">${esc(r.code)}</span>`;
+
+  const reqBlock = (!reqs.length && !detail.prerequisites_text) ? "" : `
+    <h4>Requirements</h4>
+    ${detail.prerequisites_text
+        ? `<div class="prose">${esc(detail.prerequisites_text)}</div>` : ""}
+    ${pre.length ? `<div class="reqs">${pre.map(chip).join("")}</div>` : ""}
+    ${co.length ? `<div class="reqs">
+        <span class="glabel">coreq</span>${co.map(chip).join("")}</div>` : ""}
+    ${detail.restrictions_text
+        ? `<div class="note">${esc(detail.restrictions_text)}</div>` : ""}`;
+
+  const unlocks = detail.unlocks || [];
+  const unlockBlock = unlocks.length ? `
+    <h4>Leads to (${unlocks.length})</h4>
+    <div class="reqs">${unlocks.slice(0, 12).map(u =>
+      `<span class="req" data-link="1" data-goto="${esc(u.course_id)}"
+        title="${esc(u.title)}">${esc(u.course_id)}</span>`).join("")}</div>` : "";
+
+  slot.innerHTML = `<div class="detail">
+    <div><h4>Description</h4>
+      <div class="blurb">${esc(detail.description) || "No description in the catalogue."}</div>
+      ${reqBlock}${unlockBlock}
+      ${sparkHTML}</div>
+    <div>${weekGrid(secs)}
+      <h4>Sections (${secs.length})</h4>
+      <table class="stab">
+        <tr><th>Section</th><th>When</th><th>Open</th><th>Wait</th></tr>
+        ${secs.slice(0, 12).map(s => `<tr>
+          <td>${esc(s.type_of_class)} ${esc(s.section_no)}<br>
+              <span class="room">${esc(s.crn)}</span></td>
+          <td><span class="when">${esc(s.schedule_text) || "TBA"}</span><br>
+              <span class="room">${esc(s.rooms || s.campus || "")}</span></td>
+          <td>${s.open_seats ?? "—"}</td>
+          <td>${s.waitlist_count ?? "—"}</td></tr>`).join("")}
+      </table>
+      ${secs.length > 12 ? `<div class="movesub">+ ${secs.length - 12} more sections</div>` : ""}
+      <h4>Instructors</h4>
+      <div class="blurb">${esc((detail.instructors || []).join(", ")) || "not published"}</div>
+      ${detail.url ? `<h4>Calendar</h4>
+        <a class="catlink" href="${esc(detail.url)}" target="_blank" rel="noopener">
+          Official course page &rarr;</a>` : ""}
+    </div></div>`;
+}
+
+async function boot() {
+  const opts = await (await fetch(`${API}/courses/filters?term=${state.term}`)).json();
+  const sel = $("#fac");
+  sel.length = 1;
+  opts.faculties.forEach(f => {
+    const o = document.createElement("option");
+    o.value = f; o.textContent = f.replace(/&amp;/g, "&").replace(/^Faculty of /, "");
+    sel.append(o);
+  });
+  load();
+}
+
+$("#filters").addEventListener("click", e => {
+  // [data-f] not .chip -- the credit and level options are <button>s inside a
+  // .seg group, and only this attribute marks something as a filter.
+  const chip = e.target.closest("[data-f]"); if (!chip) return;
+  const { f, v } = chip.dataset;
+  if (f === "credits" || f === "level") {          // single-select: the API takes one
+    state[f] = state[f] === v ? null : v;
+    chip.parentElement.querySelectorAll("[data-f]").forEach(x =>
+      x.setAttribute("aria-pressed", String(x.dataset.v === state[f])));
+  } else {
+    state[f] = state[f] ? 0 : 1;
+    chip.setAttribute("aria-pressed", String(!!state[f]));
+  }
+  state.offset = 0; state.open = null; load();
+});
+let qTimer;
+$("#q").addEventListener("input", e => {
+  state.q = e.target.value;
+  // Debounced: one request per pause, not one per keystroke.
+  clearTimeout(qTimer);
+  qTimer = setTimeout(() => { state.offset = 0; state.open = null; load(); }, 250);
+});
+$("#qclear").addEventListener("click", () => {
+  state.q = ""; $("#q").value = "";
+  state.offset = 0; state.open = null; load(); $("#q").focus();
+});
+// The search box is the one control worth a shortcut, and the field advertises
+// it rather than leaving it to be discovered.
+addEventListener("keydown", e => {
+  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+    e.preventDefault();
+    window.scrollTo({ top: 0, behavior: "smooth" });
+    $("#q").focus(); $("#q").select();
+  }
+});
+
+function markSet(sel, on) {
+  // Colour the whole control when it holds a value, so an active dropdown is
+  // as visible as a pressed chip.
+  sel.closest(".sel").dataset.set = on ? "1" : "0";
+}
+// Changing a filter or the sort invalidates the page number: offset 100 of a
+// re-sorted list is a different hundred courses.
+$("#fac").addEventListener("change", e => {
+  state.faculty = e.target.value; markSet(e.target, e.target.value);
+  state.offset = 0; state.open = null; load();
+});
+$("#start").addEventListener("change", e => {
+  state.start = e.target.value; markSet(e.target, e.target.value);
+  state.offset = 0; state.open = null; load();
+});
+$$("[data-s]").forEach(b => b.addEventListener("click", () => {
+  if (b.dataset.s === state.sort) return;
+  state.sort = b.dataset.s;
+  $$("[data-s]").forEach(x =>
+    x.setAttribute("aria-pressed", String(x.dataset.s === state.sort)));
+  state.offset = 0; state.open = null; load();
+}));
+$("#rows").addEventListener("click", e => {
+  // A requirement chip navigates instead of toggling the row it sits in.
+  const req = e.target.closest(".req[data-goto]");
+  if (req && req.dataset.goto) {
+    e.stopPropagation();
+    state.q = req.dataset.goto; $("#q").value = state.q;
+    state.open = null; state.offset = 0; load();
+    window.scrollTo({ top: 0, behavior: "smooth" });
+    return;
+  }
+  const card = e.target.closest(".card"); if (!card) return;
+  const id = card.dataset.id;
+  state.open = state.open === id ? null : id;
+  load().then(() => { if (state.open) loadDetail(state.open); });
+});
+$("#terms").addEventListener("click", e => {
+  const b = e.target.closest("button[data-term]"); if (!b) return;
+  state.term = b.dataset.term;
+  $("#terms").querySelectorAll("button").forEach(x =>
+    x.setAttribute("aria-pressed", String(x.dataset.term === state.term)));
+  state.open = null; state.offset = 0;
+  boot();                      // faculty list is term-scoped, so refetch it
+});
+$("#prev").addEventListener("click", () => turnPage(-1));
+$("#next").addEventListener("click", () => turnPage(1));
+$("#theme").addEventListener("click", () => {
+  const set = document.documentElement.dataset.theme;
+  const showingDark = set ? set === "dark" : matchMedia("(prefers-color-scheme: dark)").matches;
+  document.documentElement.dataset.theme = showingDark ? "light" : "dark";
+});
+boot();
+
+</script>
+</body>
+</html>
