@@ -24,6 +24,7 @@ import os
 from datetime import date
 
 from app.search import DEFAULT_TERM
+from app.text import clean
 
 SITE = os.getenv("SITE_URL", "https://mcgill-course-finder.fly.dev").rstrip("/")
 
@@ -51,7 +52,10 @@ def course_description(course, rating=None, reviews=None):
     if course.faculty:
         bits.append(course.faculty)
     lead = " · ".join(bits)
-    body = (course.description or "").strip().replace("\n", " ")
+    # Straight off the ORM row, so it has not been through the schema's
+    # validator -- a meta description full of anchor tags is worse than a
+    # visible one, because nobody sees it to report it.
+    body = clean(course.description or "").replace("\n", " ")
     text = f"{lead}. {body}" if lead else body
     return (text[:297] + "...") if len(text) > 300 else text
 
@@ -81,7 +85,7 @@ def _json_ld(course, rating, reviews, url):
         "@context": "https://schema.org",
         "@type": "Course",
         "name": course_title(course),
-        "description": (course.description or "")[:500],
+        "description": clean(course.description or "")[:500],
         "url": url,
         "courseCode": course.id,
         "provider": {"@type": "CollegeOrUniversity", "name": "McGill University"},
@@ -121,7 +125,7 @@ def crawlable_block(course, rating, difficulty, reviews, sections, instructors, 
     if instructors:
         rows.append(f"<li>Taught by: {_esc(', '.join(instructors))}</li>")
     if course.prerequisites_text:
-        rows.append(f"<li>{_esc(course.prerequisites_text)}</li>")
+        rows.append(f"<li>{_esc(clean(course.prerequisites_text))}</li>")
 
     seat_rows = ""
     for s in sections[:8]:
@@ -132,7 +136,7 @@ def crawlable_block(course, rating, difficulty, reviews, sections, instructors, 
 
     return (
         f'<article><h1>{_esc(course_title(course))}</h1>'
-        f'<p>{_esc(course.description or "")}</p>'
+        f'<p>{_esc(clean(course.description or ""))}</p>'
         f'<ul>{"".join(rows)}</ul>'
         + (f'<h2>Sections offered</h2><ul>{seat_rows}</ul>' if seat_rows else "")
         + '</article>'

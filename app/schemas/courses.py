@@ -1,6 +1,8 @@
 from datetime import datetime
 from typing import Literal
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+from app.text import clean
 
 from app.schemas.sections import MovementResponse
 
@@ -166,6 +168,15 @@ class CourseDetail(BaseModel):
     corequisites_text: str | None = None
     restrictions_text: str | None = None
     logical_prerequisites: dict | None = None
+
+    @field_validator("description", "prerequisites_text", "corequisites_text",
+                     "restrictions_text", mode="after")
+    @classmethod
+    def _strip_markup(cls, v):
+        # 7% of descriptions arrive with anchor tags from the scraped page. The
+        # client escapes what it renders, so without this those courses show
+        # their own markup as text.
+        return clean(v)
 
     # Filled in by the service, not read off the Course row.
     term: str = ""
