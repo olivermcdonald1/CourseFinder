@@ -584,7 +584,11 @@ footer a:hover{color:var(--ink)}
 @media (max-width:960px){
   /* the numeric columns stop being columns and become inline facts */
   :root{--cols:minmax(0,1fr) auto}
-  .thead > span:not(.tcount){display:none}
+  /* :not(.sortm) as well -- this rule predates the mobile sort control and hid
+     it by being more specific (0,3,1) than the .sortm rule trying to show it.
+     A more specific old rule silently beating a newer one is not a cascade
+     failure the page reports; it just renders without the control. */
+  .thead > span:not(.tcount):not(.sortm){display:none}
   .card, .skel, .thead{gap:12px}
   .card{align-items:start}
   .num{display:none}
