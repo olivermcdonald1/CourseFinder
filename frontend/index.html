@@ -4,6 +4,15 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="color-scheme" content="light dark">
+<script>
+/* Inline and first, deliberately. Reading this after the stylesheet would paint
+   the light theme and then repaint dark, which is the flash every theme toggle
+   is judged by. */
+try {
+  var t = localStorage.getItem("theme");
+  if (t) document.documentElement.dataset.theme = t;
+} catch (e) { /* private mode: fall through to the light default */ }
+</script>
 <title>McGill Course Finder — ratings and live seat counts</title>
 <meta name="description" content="Search every McGill course by rating, difficulty and live seat availability.">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23C8102E'/%3E%3Crect x='7' y='17' width='4.5' height='8' rx='1.2' fill='%23fff' opacity='.55'/%3E%3Crect x='13.75' y='12' width='4.5' height='13' rx='1.2' fill='%23fff' opacity='.8'/%3E%3Crect x='20.5' y='7' width='4.5' height='18' rx='1.2' fill='%23fff'/%3E%3C/svg%3E">
@@ -64,8 +73,17 @@
   --cols:minmax(0,1fr) 60px 82px 68px 156px;
 }
 
+/* Light is the default, regardless of what the device prefers.
+   
+   This is a dense table of small numbers -- ratings, seat counts, colour-coded
+   badges -- read quickly, mostly in daylight on a campus. Light gives higher
+   contrast on small text and lets the seat colours read as signal rather than
+   glow. Dark is better for long-form reading in low light, which this is not.
+   
+   Dark is still one press away and now sticks, so the preference this used to
+   infer from the OS is simply asked for instead. */
 @media (prefers-color-scheme:dark){
-  :root:not([data-theme="light"]){
+  :root[data-theme="dark"]{
     --bg:#0E1116;
     --surface:#161B22;
     --sunken:#1C222B;
@@ -298,6 +316,12 @@ main.wrap{padding-top:12px}
   font-variant-numeric:tabular-nums; color:var(--ink); position:relative;
 }
 .num[data-empty="1"]{color:var(--faint)}
+/* Three columns of identical mono digits made the eye read all three to find
+   the one that matters. Rating is the sort and the reason people came; the
+   other two are supporting evidence and now look like it. */
+.num.pri{font-size:15px; font-weight:550; color:var(--ink); letter-spacing:-.02em}
+.num.sec{font-size:13px; color:var(--muted)}
+.num.pri[data-empty="1"], .num.sec[data-empty="1"]{color:var(--faint); font-weight:400}
 /* Rating out of 5 as a hairline bar, revealed on hover: comparing 4.98 to 4.31
    down a column is arithmetic; comparing two bar lengths is not. */
 .seatcell{display:flex; justify-content:flex-end; align-items:center; gap:7px}
@@ -429,6 +453,17 @@ main.wrap{padding-top:12px}
          color:var(--ink-2)}
 .when{font-family:var(--mono); font-size:11.5px}
 .room{font-family:var(--mono); font-size:10px; color:var(--faint)}
+/* The CRN is the one string on this page anyone copies out -- it is what
+   Minerva asks for at registration. It was 10px grey under the section number,
+   styled exactly like the room code beside it. */
+.crn{
+  display:inline-block; font-family:var(--mono); font-size:13px; font-weight:600;
+  color:var(--ink); letter-spacing:.01em; background:var(--sunken);
+  border:1px solid var(--hair); border-radius:4px; padding:1px 6px; margin-top:3px;
+  cursor:copy; user-select:all;
+}
+.crn:hover{border-color:var(--ink-2)}
+.crn[data-copied="1"]{border-color:var(--open); color:var(--open)}
 .catlink{font-size:13px; color:var(--ink); text-decoration:none;
          border-bottom:1px solid var(--hair-2)}
 .catlink:hover{border-color:var(--ink)}
@@ -662,7 +697,11 @@ footer a:hover{color:var(--ink)}
       <span class="tcount">
         <span class="big" id="n">—</span><span id="sub">courses</span><span class="shown" id="shown"></span>
       </span>
-      <span>Rating</span>
+      <!-- No "?" glyph: the column is 60px and it wrapped onto its own line.
+           The explanation lives on each cell instead, which is where the
+           question gets asked -- hovering 4.96 says what the raw average and
+           review count were. -->
+      <span title="Weighted by review count, so a handful of perfect scores cannot outrank hundreds of good ones">Rating</span>
       <span>Difficulty</span>
       <span>Reviews</span>
       <span>Seats</span>
@@ -862,8 +901,37 @@ async function prefetchDetails(ids) {
    "prefetch finished" -- where the cache looks empty and every click duplicates
    a request that is already on the wire. That window is ~640ms wide, which is
    most of the time anyone is looking at the page. */
-function fetchDetail(id) {
+/* When the collector next writes new seat numbers.
+
+   The sweep runs at these hours UTC. Knowing the schedule lets the page say
+   "next update in 40 minutes" instead of leaving someone to wonder whether a
+   number is thirty seconds or thirty hours old -- and it makes the refresh
+   button honest, because it can say what refreshing will and will not do. */
+const SWEEP_HOURS_UTC = [5, 8, 11, 14, 17, 20, 23];
+
+function nextSweep() {
+  const now = new Date();
+  for (const h of SWEEP_HOURS_UTC) {
+    const t = new Date(now);
+    t.setUTCHours(h, 0, 0, 0);
+    if (t > now) return t;
+  }
+  const t = new Date(now);
+  t.setUTCDate(t.getUTCDate() + 1);
+  t.setUTCHours(SWEEP_HOURS_UTC[0], 0, 0, 0);
+  return t;
+}
+
+function untilNextSweep() {
+  const mins = Math.max(0, Math.round((nextSweep() - Date.now()) / 60000));
+  return mins < 60 ? `${mins} min` : `${Math.floor(mins / 60)}h ${mins % 60}m`;
+}
+
+function fetchDetail(id, fresh = false) {
   const key = `${id}|${state.term}`;
+  // A refresh has to miss the cache, or the button would re-render the same
+  // numbers it was pressed to replace.
+  if (fresh) detailCache.delete(key);
   let req = detailCache.get(key);
   if (!req) {
     req = getJSON(`/courses/${id}?term=${state.term}`, 8000);
@@ -975,7 +1043,10 @@ function rowHTML(c) {
   // The live dot belongs only on a number that is actually moving.
   const dot = st === "open" ? `<span class="dot"></span>` : "";
   const tip = age ? `Seats measured ${age}` : "Not yet observed this term";
-  const rating = c.avg_rating;
+  // The score the ordering uses, not the plain mean -- otherwise the column
+  // disagrees with the sequence it is sorted into. The raw average and the
+  // review count are both still one hover (or one click) away.
+  const rating = c.weighted_rating ?? c.avg_rating;
 
   return `
   <button class="card" data-st="${st}" data-id="${c.id}" type="button"
@@ -989,9 +1060,12 @@ function rowHTML(c) {
       <span class="inline-stats">${rating != null
         ? `${r2(rating)} rating · ${fmt(c.review_count)} reviews` : ""}</span>
     </span>
-    <span class="num" data-empty="${rating == null ? 1 : 0}">${r2(rating)}</span>
-    <span class="num" data-empty="${c.avg_difficulty == null ? 1 : 0}">${r2(c.avg_difficulty)}</span>
-    <span class="num" data-empty="${c.review_count ? 0 : 1}">${fmt(c.review_count)}</span>
+    <span class="num pri" data-empty="${rating == null ? 1 : 0}"
+      title="${c.avg_rating != null
+        ? `${r2(c.avg_rating)} average from ${fmt(c.review_count)} reviews, weighted toward the catalogue mean`
+        : "no reviews yet"}">${r2(rating)}</span>
+    <span class="num sec" data-empty="${c.avg_difficulty == null ? 1 : 0}">${r2(c.avg_difficulty)}</span>
+    <span class="num sec" data-empty="${c.review_count ? 0 : 1}">${fmt(c.review_count)}</span>
     <span class="seatcell">
       <span class="badge" data-st="${st}" title="${tip}">${dot}${seat}</span>
     </span>
@@ -1365,7 +1439,7 @@ async function loadDetail(id) {
         <tr><th>Section</th><th>When</th><th>Open</th><th>Wait</th></tr>
         ${secs.slice(0, 12).map(s => `<tr>
           <td>${esc(s.type_of_class)} ${esc(s.section_no)}<br>
-              <span class="room">${esc(s.crn)}</span></td>
+              <span class="crn" title="CRN — click to copy">${esc(s.crn)}</span></td>
           <td><span class="when">${esc(s.schedule_text) || "TBA"}</span><br>
               <span class="room">${esc(s.rooms || s.campus || "")}</span></td>
           <td>${s.open_seats ?? "—"}</td>
@@ -1618,6 +1692,20 @@ $$("[data-s]").forEach(b => b.addEventListener("click", () => {
   state.offset = 0; state.open = null; scheduleLoad();
 }));
 $("#rows").addEventListener("click", e => {
+  /* The CRN is the payoff of the whole site: you decide on a course here and
+     type this number into Minerva. Copying it is the last step of the job, so
+     it should not require selecting five digits inside a table cell -- and the
+     click must not also toggle the row shut underneath the panel being read. */
+  const crn = e.target.closest(".crn");
+  if (crn) {
+    e.stopPropagation();
+    navigator.clipboard?.writeText(crn.textContent.trim()).then(() => {
+      crn.dataset.copied = "1";
+      setTimeout(() => delete crn.dataset.copied, 1200);
+    }).catch(() => { /* no clipboard permission: user-select:all still allows it */ });
+    return;
+  }
+
   // Dropping a constraint from the empty state. Handled here rather than on the
   // controls themselves because this is where the user is looking when they
   // discover the thing is excluding what they wanted.
@@ -1672,10 +1760,13 @@ $("#terms").addEventListener("click", e => {
 });
 $("#prev").addEventListener("click", () => turnPage(-1));
 $("#next").addEventListener("click", () => turnPage(1));
+/* The toggle used to be a lie: it flipped the theme and forgot, so anyone who
+   preferred dark pressed it again on every single visit. */
 $("#theme").addEventListener("click", () => {
-  const set = document.documentElement.dataset.theme;
-  const showingDark = set ? set === "dark" : matchMedia("(prefers-color-scheme: dark)").matches;
-  document.documentElement.dataset.theme = showingDark ? "light" : "dark";
+  const dark = document.documentElement.dataset.theme === "dark";
+  const next = dark ? "light" : "dark";
+  document.documentElement.dataset.theme = next;
+  try { localStorage.setItem("theme", next); } catch { /* private mode */ }
 });
 openFromURL();
 boot();

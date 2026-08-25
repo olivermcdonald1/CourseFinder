@@ -74,8 +74,9 @@ def _summary(row):
     # property of the result set, not of this course, so it is read once by the
     # caller and dropped here.
     (course, n_sections, max_open, max_wait, observed_at,
-     has_history, delta, days, _total) = row
+     has_history, delta, days, weighted, _total) = row
     return CourseSummary.model_validate(course).model_copy(update={
+        "weighted_rating": float(weighted) if weighted is not None else None,
         "n_sections": n_sections,
         "open_seats": max_open,
         "waitlist_count": max_wait,

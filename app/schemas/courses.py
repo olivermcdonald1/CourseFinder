@@ -74,6 +74,12 @@ class CourseSummary(BaseModel):
     trend_days: int | None = None
     seats_per_day: float | None = None
 
+    # avg_rating is the plain mean of the reviews. weighted_rating pulls it
+    # toward the catalogue average in proportion to how few reviews there are,
+    # so five perfect reviews cannot outrank nine hundred good ones. It is what
+    # the "Best rated" ordering uses, and therefore what the list should show.
+    weighted_rating: float | None = None
+
 class SearchResponse(BaseModel):
     total: int
     limit: int

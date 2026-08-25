@@ -555,6 +555,13 @@ def search_page(session, *, limit=DEFAULT_LIMIT, offset=0, sort_by=None,
                    seats.c.observed_at,
                    hist.c.cid.isnot(None).label("has_history"),
                    trend.c.seats_delta, trend.c.trend_days,
+                   # The score the list is actually ORDERED by. Sending only the
+                   # raw average meant the page contradicted itself: a course
+                   # showing 4.98 sat above three showing 5.00, because 938
+                   # reviews outweigh 153. Correct, and indistinguishable from a
+                   # broken sort unless the number you rank by is the number you
+                   # show.
+                   _damped_rating().label("weighted_rating"),
                    func.count().over().label("total"))
             .outerjoin(seats, seats.c.cid == Course.id)
             .outerjoin(hist, hist.c.cid == Course.id)
