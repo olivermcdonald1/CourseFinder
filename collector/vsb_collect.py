@@ -84,10 +84,31 @@ def courses_for_term(code, catalogue=CATALOGUE):
 
     A course with no schedule entry for the term isn't offered, so asking VSB
     about it wastes a slot in the batch and returns nothing useful.
+
+    The database is asked first and the 18MB catalogue export is the fallback.
+    Both answer identically -- the sections table was loaded FROM that export --
+    but only one of them exists everywhere. data/reference/ is gitignored, so on
+    a fresh checkout the file is simply absent, and this function raised
+    FileNotFoundError every night in CI while working perfectly by hand. Reading
+    the list from the database removes a dependency on a file that the thing
+    needing it could never have.
+
+    The file still wins on an empty database, which is the one case the query
+    cannot serve: a first load, before any sections exist.
     """
     label = term_label(code)
     if label is None:
         return []
+
+    from_db = _courses_from_db(code)
+    if from_db:
+        return from_db
+
+    if not catalogue.exists():
+        raise FileNotFoundError(
+            f"No sections for term {code} in the database and no catalogue at "
+            f"{catalogue}. Load the catalogue first (see DEPLOY.md), or place "
+            f"the export there.")
 
     records = json.loads(catalogue.read_text())
     return sorted(
@@ -95,6 +116,30 @@ def courses_for_term(code, catalogue=CATALOGUE):
         for r in records
         if any(s["term"] == label for s in (r.get("schedule") or []))
     )
+
+
+def _courses_from_db(code):
+    """Course ids with a section in this term, or [] if the table is empty."""
+    # Running `python collector/vsb_collect.py` puts collector/ on sys.path, not
+    # the project root, so `app` is not importable no matter what the working
+    # directory is. Both the cron wrapper and the CI workflow invoke it exactly
+    # that way. Adding the root here keeps that invocation working rather than
+    # requiring every caller to switch to `python -m`.
+    import sys
+    root = str(HERE.parent)
+    if root not in sys.path:
+        sys.path.insert(0, root)
+
+    from sqlalchemy import distinct, select
+    from sqlalchemy.orm import Session
+
+    from app.db import engine
+    from app.models import Section
+
+    with Session(engine) as session:
+        return sorted(session.execute(
+            select(distinct(Section.course_id)).where(Section.term == code)
+        ).scalars())
 
 
 def capture_tokens(term, course):
