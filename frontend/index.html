@@ -1427,21 +1427,31 @@ addEventListener("popstate", () => {
   load().then(() => { if (state.open) loadDetail(state.open); });
 });
 
-function boot() {
-  // A course page was served for this URL, so open it rather than making the
-  // visitor find the row again in a list they did not ask for.
-  //
+/* Runs once, at startup, and never again.
+
+   This used to live inside boot(), which was wrong because boot() is not only
+   the startup path -- the term switcher calls it too, to refetch the faculty
+   list for the new term. So switching term re-read a URL that still named the
+   previously opened course and typed it into the search box, which then showed
+   zero results, because a Fall course is generally not offered in Winter. The
+   visitor got an empty list and a code they never typed and could not explain.
+
+   Reading the URL is an arrival concern. Nothing after arrival should consult
+   it again. */
+function openFromURL() {
+  const deep = courseFromURL();
+  if (!deep) return;
   // Searching for it is what puts it on screen at all: the default list is the
   // top 25 by rating, and an arbitrary course is almost never in it. Without
   // this the row to expand would not exist and the panel would open onto
   // nothing. The search box shows the code, so the page also explains itself --
   // this is a search for one course, and clearing it returns to browsing.
-  const deep = courseFromURL();
-  if (deep) {
-    state.open = deep;
-    state.q = deep;
-    $("#q").value = deep;
-  }
+  state.open = deep;
+  state.q = deep;
+  $("#q").value = deep;
+}
+
+function boot() {
 
   // Courses first, and not behind an await. The faculty list is a convenience;
   // the course table is the point. Awaiting the options here made these two
@@ -1654,6 +1664,10 @@ $("#terms").addEventListener("click", e => {
   $("#terms").querySelectorAll("button").forEach(x =>
     x.setAttribute("aria-pressed", String(x.dataset.term === state.term)));
   state.open = null; state.offset = 0;
+  // The open course belonged to the term being left. Put the address bar back
+  // to the list, or a refresh would deep-link into a course this term may not
+  // even offer.
+  syncURL(true);
   boot();                      // faculty list is term-scoped, so refetch it
 });
 $("#prev").addEventListener("click", () => turnPage(-1));
@@ -1663,6 +1677,7 @@ $("#theme").addEventListener("click", () => {
   const showingDark = set ? set === "dark" : matchMedia("(prefers-color-scheme: dark)").matches;
   document.documentElement.dataset.theme = showingDark ? "light" : "dark";
 });
+openFromURL();
 boot();
 
 </script>
