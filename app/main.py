@@ -14,10 +14,12 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from app.ratelimit import RateLimit
 from app.routes import courses, sections
+from app.routes import pages
 
 app = FastAPI(
     title="CourseFinder",
@@ -28,6 +30,14 @@ app = FastAPI(
 # Public endpoint with no auth, three Postgres queries per search, on a
 # free-tier database. Added before CORS so a throttled request never even
 # reaches routing.
+# Added after RateLimit, so it sits OUTSIDE it and compresses every response
+# including refusals. minimum_size skips bodies too small to win: below roughly
+# 500 bytes the gzip header costs more than it saves, and /health would grow.
+#
+# JSON compresses about 5:1 here, and the frontend now asks for 25 course
+# details behind every page paint -- so this is the difference between ~125KB
+# and ~25KB on the wire for one page view.
+app.add_middleware(GZipMiddleware, minimum_size=500)
 app.add_middleware(RateLimit)
 
 # Origins come from the environment because the deployed hostname is not known
@@ -47,6 +57,7 @@ if _origins:
 
 app.include_router(courses.router)
 app.include_router(sections.router)
+app.include_router(pages.router)
 
 
 @app.get("/health", tags=["meta"])

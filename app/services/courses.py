@@ -13,6 +13,7 @@ from app.search import (count_matching, filter_options, get_course,
                         get_instructors, get_requirements, get_sections,
                         get_unlocks, search_page)
 from app.search import DEFAULT_TERM
+from app.services.sections import movement as section_movement
 
 # Filtering on any of these already excludes unreviewed courses, because
 # `NULL <= 2.5` is NULL and WHERE only keeps TRUE. So reviewed_only is a no-op
@@ -40,9 +41,20 @@ def search(session, filters):
     offset = kwargs.pop("offset")
     sort_by = kwargs.pop("sort_by", None)
 
-    total = count_matching(session, **kwargs)
     rows = search_page(session, limit=limit, offset=offset,
                        sort_by=sort_by, **kwargs)
+
+    # Every row carries the pre-LIMIT total, so the common path needs no count
+    # query at all. An empty page is the one case it cannot answer: with no rows
+    # there is no window to read it off. At offset 0 that unambiguously means
+    # zero matches; past offset 0 it means the caller paged off the end of a
+    # result set whose size is still worth reporting, so pay for the count then.
+    if rows:
+        total = rows[0].total
+    elif offset:
+        total = count_matching(session, **kwargs)
+    else:
+        total = 0
 
     return SearchResponse(
         total=total,
@@ -58,8 +70,11 @@ def search(session, filters):
 
 def _summary(row):
     """One search row -> CourseSummary, with the seat rollup grafted on."""
+    # `total` trails every row (the window count search_page selects) and is a
+    # property of the result set, not of this course, so it is read once by the
+    # caller and dropped here.
     (course, n_sections, max_open, max_wait, observed_at,
-     has_history, delta, days) = row
+     has_history, delta, days, _total) = row
     return CourseSummary.model_validate(course).model_copy(update={
         "n_sections": n_sections,
         "open_seats": max_open,
@@ -162,10 +177,17 @@ def detail(session, course_id, term=DEFAULT_TERM):
             rooms=rooms,
         ))
 
+    # The sparkline only ever charts the first section, so only its history is
+    # worth fetching. Failing to find it is not an error: a section swept once
+    # has nothing to chart, and the rest of the payload is still the point.
+    tracked = sections[0].crn if sections else None
+    movement = section_movement(session, tracked, term) if tracked else None
+
     # model_validate reads the Course columns; model_copy grafts on the parts
     # that don't live on that row.
     return CourseDetail.model_validate(course).model_copy(update={
         "term": term,
+        "movement": movement,
         "instructors": get_instructors(session, course.id, term),
         "sections": sections,
         "requirements": [
@@ -179,9 +201,26 @@ def detail(session, course_id, term=DEFAULT_TERM):
     })
 
 
+# Keyed by term, held for the life of the process. Everything in here is
+# catalogue data -- which faculties, departments, subjects, campuses, class
+# types, credit values and levels exist in a term. None of it is seat data, so
+# the daily sweep does not touch it and it changes only when a new catalogue is
+# loaded, which is a deploy. A deploy restarts the process and clears this.
+#
+# Worth caching because the payload is seven separate DISTINCT queries and the
+# frontend calls it on every page load and every term switch, to fill one
+# dropdown. lru_cache is not usable here: the session is an argument, unhashable
+# and different every request, and caching on it would key on the wrong thing.
+_options_cache: dict[str, FilterOptions] = {}
+
+
 def options(session, term=DEFAULT_TERM):
     """Option lists for the filter chips."""
-    return FilterOptions.model_validate(filter_options(session, term))
+    cached = _options_cache.get(term)
+    if cached is None:
+        cached = FilterOptions.model_validate(filter_options(session, term))
+        _options_cache[term] = cached
+    return cached
 
 
 def _hidden_count(session, kwargs, total):

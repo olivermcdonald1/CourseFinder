@@ -19,10 +19,22 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import JSONResponse
 
 WINDOW = 60.0
-LIMIT = int(os.getenv("RATE_LIMIT_PER_MIN", "120"))
+LIMIT = int(os.getenv("RATE_LIMIT_PER_MIN", "500"))
 
-# A student clicking filters quickly is maybe 20 requests a minute, so 120
-# leaves generous headroom for real use while stopping a scripted sweep.
+# Recalibrated when the frontend began prefetching. One page view is no longer
+# one request: it is the list plus a detail for each of the 25 rows, so 26 --
+# and hovering a filter adds a speculative list on top. The old ceiling of 120
+# assumed ~20 requests a minute per student and started refusing at four page
+# views, which reads to the user as the site breaking under ordinary clicking.
+#
+# 500 is roughly ten page views a minute per IP, well above deliberate use and
+# still far below a scripted sweep. The number is tied to PAGE in the frontend:
+# raising the page size raises the per-view cost with it.
+#
+# The sharper limitation is the key, not the ceiling. Campus wifi puts hundreds
+# of students behind a handful of NAT addresses, so they share one bucket and
+# throttle each other -- worst exactly on registration morning. Fixing that
+# means keying on something narrower than an IP, not raising this again.
 _hits: dict[str, deque] = defaultdict(deque)
 
 

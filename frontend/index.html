@@ -99,6 +99,14 @@
 }
 
 *{box-sizing:border-box}
+
+/* The browser's own [hidden]{display:none} lives in the user-agent stylesheet,
+   which ANY author rule outranks. So every element here given display:flex or
+   display:inline-flex silently stopped honouring its hidden attribute and went
+   on being laid out, empty -- the banner, the pager and the freshness stamp all
+   did. !important is the one place it earns its keep: this must beat whatever a
+   component rule sets, or the bug returns the next time one is styled. */
+[hidden]{display:none !important}
 body{
   margin:0; background:var(--bg); color:var(--ink);
   font:400 var(--t-body)/1.45 var(--sans);
@@ -272,6 +280,14 @@ main.wrap{padding-top:12px}
          white-space:nowrap}
 .c-meta{font-size:var(--t-meta); color:var(--muted); margin-top:2px;
         overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+/* Its own line, and a sibling of .c-meta rather than a child of it.
+   As a child it was a display:flex box inside a white-space:nowrap,
+   text-overflow:ellipsis line -- a block box spliced into an inline run, which
+   forces anonymous block boxes around it and lets the truncated text and these
+   stats render on top of each other. Nothing about the fix is the flex; it is
+   that a block-level thing cannot live inside a line being ellipsed. */
+.inline-stats{font-size:var(--t-meta); color:var(--muted); margin-top:2px;
+              overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
 /* the code is an identifier, not a headline: mono, small, quiet */
 .c-code{font-family:var(--mono); font-size:12px; color:var(--ink-2);
         font-weight:500; letter-spacing:-.01em}
@@ -283,15 +299,6 @@ main.wrap{padding-top:12px}
 .num[data-empty="1"]{color:var(--faint)}
 /* Rating out of 5 as a hairline bar, revealed on hover: comparing 4.98 to 4.31
    down a column is arithmetic; comparing two bar lengths is not. */
-.rbar{
-  position:absolute; right:0; bottom:-6px; height:2px; width:38px;
-  background:var(--hair); border-radius:1px; opacity:0;
-  transition:opacity var(--ease);
-}
-.rbar i{position:absolute; inset:0 auto 0 0; background:var(--muted);
-        border-radius:1px}
-.card:hover .rbar{opacity:1}
-
 .seatcell{display:flex; justify-content:flex-end; align-items:center; gap:7px}
 .badge{
   display:inline-flex; align-items:center; gap:6px; font-family:var(--mono);
@@ -307,9 +314,6 @@ main.wrap{padding-top:12px}
                        border-color:color-mix(in oklab,var(--full) 28%,transparent)}
 .badge .dot{width:5px; height:5px; background:currentColor}
 .badge .dot::after{background:currentColor}
-.fast{font-family:var(--mono); font-size:10.5px; color:var(--tight);
-      white-space:nowrap}
-
 /* skeletons mirror the row geometry, so nothing jumps when data lands */
 .skel{
   display:grid; grid-template-columns:var(--cols); gap:16px; align-items:center;
@@ -325,6 +329,32 @@ main.wrap{padding-top:12px}
            animation:breathe 1.4s ease-in-out infinite}
 @keyframes breathe{0%,100%{opacity:1} 50%{opacity:.5}}
 
+.banner{
+  display:flex; align-items:center; gap:8px; margin-bottom:8px;
+  padding:9px 12px; border-radius:6px; font-size:var(--t-meta);
+  background:var(--tight-bg); color:var(--tight);
+  border:1px solid color-mix(in oklab,var(--tight) 30%,transparent);
+}
+.banner[data-kind="error"]{
+  background:var(--full-bg); color:var(--ink-2);
+  border-color:var(--hair-2);
+}
+.drops{display:flex; flex-wrap:wrap; gap:7px; justify-content:center; margin-top:14px}
+.drop{
+  display:inline-flex; align-items:center; gap:7px; cursor:pointer;
+  font:inherit; font-size:var(--t-meta); color:var(--ink-2);
+  background:var(--surface); border:1px solid var(--hair-2); border-radius:999px;
+  padding:5px 11px;
+}
+.drop:hover{border-color:var(--ink-2); color:var(--ink)}
+.drop span{color:var(--faint); font-size:15px; line-height:1}
+.drop:hover span{color:var(--ink)}
+.dropnote{margin-top:13px; font-size:var(--t-meta); color:var(--faint)}
+.linky{
+  font:inherit; font-size:inherit; color:var(--ink-2); background:none;
+  border:0; padding:0; cursor:pointer; text-decoration:underline;
+}
+.linky:hover{color:var(--ink)}
 .empty{padding:44px 16px; text-align:center; color:var(--muted);
        background:var(--surface); border:1px solid var(--hair); border-radius:7px}
 .empty b{display:block; color:var(--ink); font-size:var(--t-title);
@@ -420,7 +450,7 @@ footer a:hover{color:var(--ink)}
   .card{align-items:start}
   .num{display:none}
   .seatcell{flex-direction:column; align-items:flex-end; gap:4px}
-  .inline-stats{display:flex}
+  .inline-stats{display:block}
   .detail{grid-template-columns:1fr; gap:18px}
   .tag{display:none}
 }
@@ -518,6 +548,9 @@ footer a:hover{color:var(--ink)}
 </div>
 
 <main class="wrap">
+  <!-- Non-destructive: a transient error must not throw away the results the
+       student was reading. -->
+  <div class="banner" id="banner" role="status" hidden></div>
   <div class="list" id="rows"></div>
   <nav class="pager" id="pager" aria-label="Pagination" hidden>
     <button class="pbtn" id="prev" type="button">&larr; Previous</button>
@@ -529,9 +562,7 @@ footer a:hover{color:var(--ink)}
 <footer>
   <div class="wrap">
     <div class="frow">
-      <div><b>McGill Course Finder</b> — built by Oliver McDonald ·
-        <a href="https://github.com/olivermcdonald1/CourseFinder" target="_blank"
-           rel="noopener">source on GitHub</a></div>
+      <div><b>McGill Course Finder</b></div>
       <div class="spacer"></div>
       <div>Not affiliated with McGill University.</div>
     </div>
@@ -565,7 +596,25 @@ const plural = (n, w) => `${fmt(n)} ${w}${Math.abs(n) === 1 ? "" : "s"}`;
 const esc = s => String(s ?? "").replace(/[&<>"]/g,
   c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 
-const state = { credits: null, level: null, seats: 0, start: "", faculty: "",
+/* A 429 body still parses as JSON, so checking res.ok is the only way to tell
+   an answer from a refusal -- without it the detail panel would render itself
+   from an error payload and quietly show nothing. */
+async function getJSON(path, timeout = 0) {
+  // A stalled request never rejects on its own -- fetch only settles on a
+  // response or a network error, and "the server is thinking" is neither. A
+  // try/catch around an await cannot rescue that, because there is nothing to
+  // catch. AbortSignal.timeout is what converts a hang into a rejection.
+  const res = await fetch(`${API}${path}`,
+    timeout ? { signal: AbortSignal.timeout(timeout) } : undefined);
+  if (!res.ok) throw Object.assign(new Error(`HTTP ${res.status}`), { status: res.status });
+  return res.json();
+}
+
+/* credits and level hold ARRAYS now, not one value each. Two users on the first
+   day were watched clicking 100, then 200, then 300, then 400 one at a time --
+   the list can only show one at once, so comparing two levels meant running two
+   searches and merging them by memory. */
+const state = { credits: [], level: [], seats: 0, start: "", faculty: "",
                 sort: "rating", open: null, offset: 0, q: "", term: "202609" };
 
 /* One box, three meanings -- the same shape the deleted regex tier used.
@@ -588,18 +637,117 @@ function searchParams(q) {
   return { keywords: t, reviewed_only: "false" };
 }
 
-function queryString() {
+/* Takes the state to describe rather than reading the global one, so hover can
+   ask "what would this filter return?" without touching what is on screen. */
+function queryString(st = state) {
   const p = new URLSearchParams({ undergrad_only: "true", limit: String(PAGE),
-                                  term: state.term });
-  for (const [k, v] of Object.entries(searchParams(state.q))) p.set(k, v);
-  if (state.credits)  p.set("credits", state.credits);
-  if (state.level)  { p.set("min_level", state.level); p.set("max_level", state.level); }
-  if (state.seats)    p.set("has_open_seats", "true");
-  if (state.start)    p.set("earliest_start", state.start);
-  if (state.faculty)  p.set("faculty", state.faculty);
-  if (state.offset)   p.set("offset", state.offset);
-  p.set("sort_by", state.sort);
+                                  term: st.term });
+  for (const [k, v] of Object.entries(searchParams(st.q))) p.set(k, v);
+  // Repeated params, not a range: min/max can only describe a span, so picking
+  // 100 and 300 would silently sweep in every 200-level course.
+  st.credits.forEach(v => p.append("credits_any", v));
+  st.level.forEach(v => p.append("levels", v));
+  if (st.seats)    p.set("has_open_seats", "true");
+  if (st.start)    p.set("earliest_start", st.start);
+  if (st.faculty)  p.set("faculty", st.faculty);
+  if (st.offset)   p.set("offset", st.offset);
+  p.set("sort_by", st.sort);
   return p.toString();
+}
+
+/* What state a filter click WOULD produce. The click handler must stay in step
+   with this: if the two disagree, hover primes the cache under one query string
+   and the click asks for another, so the prefetch silently never hits. */
+function nextState(f, v) {
+  const st = { ...state, offset: 0, open: null };
+  if (f === "credits" || f === "level") {
+    // Toggle within the set. Copied rather than mutated -- this builds a
+    // hypothetical for hover, and mutating would change what is on screen.
+    st[f] = st[f].includes(v) ? st[f].filter(x => x !== v) : [...st[f], v];
+  } else {
+    st[f] = st[f] ? 0 : 1;
+  }
+  return st;
+}
+
+/* ── Speculative fetching ────────────────────────────────────────────────────
+
+   Two caches, both keyed by exactly what identifies the request, so a hit is
+   never a guess: lists by their query string, details by course + term.
+
+   Session-lived and never invalidated. Seat counts change once a day when the
+   collector sweeps, so the staleness ceiling is a page reload -- acceptable for
+   a number already labelled with its own age in the UI. A cache that had to
+   expire would need a clock, and this one does not.
+
+   Nothing here ever blocks the screen. Prefetch failures are swallowed
+   completely: the worst case is that the real request runs later, which is
+   what would have happened anyway. */
+const listCache = new Map();
+const detailCache = new Map();
+
+/* In-flight prefetches, kept separately from their results.
+
+   This map is what makes hover worth anything. Hover-to-click is ~300ms and a
+   list takes ~640ms, so at the moment of the click the prefetch has usually NOT
+   finished. Checking only for a finished result would find nothing, fire a
+   second identical request, and wait the full 640ms again -- hover would cost
+   double the requests and save nothing. Joining the promise already in flight
+   is what turns 640ms into the ~340ms that remains of it. */
+const listPending = new Map();
+
+let prefetchTimer = null;
+
+// Bumped on every real navigation. In-flight prefetches check it and stop --
+// not to save bandwidth, but because 25 details for a list nobody is looking at
+// should not delay the 25 for the list they are.
+let navGen = 0;
+
+function prefetchList(qs) {
+  if (listCache.has(qs) || listPending.has(qs)) return;   // hovering twice is one fetch
+  const req = getJSON(`/courses?${qs}`, 8000)
+    .then(d => { listCache.set(qs, d); return d; })
+    .finally(() => listPending.delete(qs));
+  req.catch(() => {});          // a failed guess is not an error anyone should see
+  listPending.set(qs, req);
+}
+
+/* Fills the detail cache for everything on screen, so opening a row is a cache
+   read rather than a request.
+
+   Concurrency is capped low on purpose. Each detail is six queries, so even
+   four at a time is 24 queries in flight against one 0.25 CU instance -- and
+   measured against the live site, a heavier storm doubled the latency of the
+   ordinary /courses request running beside it. Speculative work that slows the
+   page down has stopped paying for itself. Four still fills 25 details well
+   inside the time anyone spends reading titles. */
+async function prefetchDetails(ids) {
+  const mine = navGen;
+  const queue = ids.filter(id => !detailCache.has(`${id}|${state.term}`));
+  const worker = async () => {
+    while (queue.length && mine === navGen) {
+      const id = queue.shift();
+      await fetchDetail(id).catch(() => {});
+    }
+  };
+  await Promise.all(Array.from({ length: 4 }, worker));
+}
+
+/* The cache holds PROMISES, not results, so opening a row that is mid-prefetch
+   joins the request already running rather than starting a second one beside
+   it. Storing results would leave a window -- between "prefetch started" and
+   "prefetch finished" -- where the cache looks empty and every click duplicates
+   a request that is already on the wire. That window is ~640ms wide, which is
+   most of the time anyone is looking at the page. */
+function fetchDetail(id) {
+  const key = `${id}|${state.term}`;
+  let req = detailCache.get(key);
+  if (!req) {
+    req = getJSON(`/courses/${id}?term=${state.term}`, 8000);
+    req.catch(() => detailCache.delete(key));   // a failure must not be cached
+    detailCache.set(key, req);
+  }
+  return req;
 }
 
 /* Seat state. VSB reports negative open_seats for over-enrolled sections,
@@ -642,15 +790,6 @@ function spark(vals, colour, w = 120, h = 30) {
 /* Seats disappearing at >1.5/day is worth flagging; below that it's noise at a
    two-day sample. Shows the runway, not just the rate, because "12 open" and
    "-6/day" only mean something together. */
-function fastBadge(c) {
-  const rate = c.seats_per_day;
-  if (rate == null || rate > -1.5) return "";
-  const left = c.open_seats ?? 0;
-  const days = left > 0 ? Math.max(1, Math.round(left / Math.abs(rate))) : 0;
-  return `<span class="fast">&darr;${Math.abs(rate)}/day${
-    days ? ` · ~${days}d` : ""}</span>`;
-}
-
 /* A week grid for one course's sections. Not a schedule builder -- it answers
    "when does this thing actually meet", which is the question you have while
    deciding, and it needs no selection state or conflict logic to do it.
@@ -723,17 +862,14 @@ function rowHTML(c) {
       <span class="c-meta"><span class="c-code">${esc(c.id)}</span>${
         c.credits_text ? ` · ${esc(c.credits_text)} cr` : ""} · ${
         esc(c.department || c.faculty || "")}${
-        c.n_sections ? ` · ${plural(c.n_sections, "section")}` : ""}<span
-        class="inline-stats">${rating != null
-          ? `${r2(rating)} rating · ${fmt(c.review_count)} reviews` : ""}</span></span>
+        c.n_sections ? ` · ${plural(c.n_sections, "section")}` : ""}</span>
+      <span class="inline-stats">${rating != null
+        ? `${r2(rating)} rating · ${fmt(c.review_count)} reviews` : ""}</span>
     </span>
-    <span class="num" data-empty="${rating == null ? 1 : 0}">${r2(rating)}${
-      rating != null ? `<span class="rbar"><i style="width:${
-        (rating / 5 * 100).toFixed(1)}%"></i></span>` : ""}</span>
+    <span class="num" data-empty="${rating == null ? 1 : 0}">${r2(rating)}</span>
     <span class="num" data-empty="${c.avg_difficulty == null ? 1 : 0}">${r2(c.avg_difficulty)}</span>
     <span class="num" data-empty="${c.review_count ? 0 : 1}">${fmt(c.review_count)}</span>
     <span class="seatcell">
-      ${fastBadge(c)}
       <span class="badge" data-st="${st}" title="${tip}">${dot}${seat}</span>
     </span>
   </button>
@@ -770,6 +906,7 @@ function renderPager(d) {
 function turnPage(delta) {
   const next = state.offset + delta * PAGE;
   if (next < 0) return;
+  clearTimeout(loadTimer);
   state.offset = next;
   state.open = null;                    // a detail panel from page 1 is stale
   load().then(() => window.scrollTo({ top: 0, behavior: "smooth" }));
@@ -799,39 +936,219 @@ function renderCount(d) {
     + (state.q ? ` matching “${state.q}”` : "");
 }
 
-/* Every response carries the sequence number of the request that asked for it.
-   Two clicks in quick succession are two in-flight fetches, and nothing
-   guarantees they come back in order -- so an older, slower response can land
-   last and paint stale counts over fresh ones. Anything but the newest is
-   dropped. */
+/* Two guards, and they do different jobs.
+
+   seq answers "is this response still wanted" -- two clicks are two in-flight
+   fetches and nothing guarantees they return in order, so an older, slower
+   response could otherwise paint stale counts over fresh ones.
+
+   The AbortController answers "should this request still be running at all".
+   Without it, clicking six filters quickly sends six requests and waits for
+   six answers, five of which are thrown away -- wasted work on a free-tier
+   database, and enough to trip the rate limit from ordinary clicking. Now each
+   new request cancels the one it supersedes. */
 let seq = 0;
+let inflight = null;
+let loadTimer = null;
 
-async function load() {
-  const mine = ++seq;
-  const rows = $("#rows");
-  if (!rows.children.length) rows.innerHTML = skeleton(8);
-  rows.dataset.loading = "1";
-  rows.setAttribute("aria-busy", "true");
+/* Coalesce bursts of clicks into one request.
 
-  const res = await fetch(`${API}/courses?${queryString()}`);
-  if (mine !== seq) return;
-  if (!res.ok) {
-    rows.innerHTML = `<div class="empty"><b>API error ${res.status}</b>
-      Is uvicorn running on ${API || location.origin}?</div>`;
-    delete rows.dataset.loading;
-    return;
+   Aborting an in-flight fetch does not un-send it -- the browser has already
+   put it on the wire and the server still does the work. So eight quick
+   filter clicks were eight searches, which is what tripped the rate limit
+   during ordinary use.
+
+   120ms is below the threshold where a control feels laggy, and the button
+   state flips synchronously anyway, so the UI still responds instantly. What
+   waits is only the network call. */
+function scheduleLoad(delay = 120) {
+  clearTimeout(loadTimer);
+  loadTimer = setTimeout(() => load(), delay);
+}
+
+function showBanner(msg, kind = "warn") {
+  const b = $("#banner");
+  b.textContent = msg;
+  b.dataset.kind = kind;
+  b.hidden = false;
+}
+const hideBanner = () => { $("#banner").hidden = true; };
+
+/* What is on screen when nothing matches.
+
+   "Try removing a filter" was the old text, and it was watched failing: someone
+   searched a specific course, clicked a level chip, and hit five empty screens
+   in a row before leaving. Every one of them was correct -- FINE-482 really is
+   not a 200-level course -- but the page never said which of the things they
+   had chosen was doing the excluding, and the search box does not look like a
+   filter at all, so it never occurred to them that their own query was half
+   the contradiction.
+
+   So name every active constraint and make each one removable where it sits.
+   A dead end with an exit is not a dead end. */
+function activeFilters() {
+  const out = [];
+  if (state.q)        out.push({ k: "q",       label: `“${state.q}”` });
+  state.level.forEach(v   => out.push({ k: "level",   v, label: `${v}-level` }));
+  state.credits.forEach(v => out.push({ k: "credits", v, label: `${v} credits` }));
+  if (state.seats)    out.push({ k: "seats",   label: "has seats" });
+  if (state.faculty)  out.push({ k: "faculty", label: state.faculty.replace(/^Faculty of /, "") });
+  if (state.start)    out.push({ k: "start",   label: `starts after ${state.start}` });
+  return out;
+}
+
+function emptyHTML() {
+  const active = activeFilters();
+  if (!active.length) {
+    // No filters and still nothing: not the user's doing, so do not imply it is.
+    return `<div class="empty"><b>Nothing to show</b>No courses are listed for this term.</div>`;
   }
-  const d = await res.json();
-  if (mine !== seq) return;
+  return `<div class="empty"><b>Nothing matches all of these</b>
+    <div class="drops">${active.map(a =>
+      `<button class="drop" type="button" data-drop="${a.k}"
+        ${a.v ? `data-dropv="${esc(a.v)}"` : ""}>${esc(a.label)}<span>&times;</span></button>`
+      ).join("")}</div>
+    <div class="dropnote">Remove one to widen the search${
+      active.length > 1 ? `, or <button class="linky" type="button" data-drop="all">clear everything</button>` : ""}.</div>
+  </div>`;
+}
 
+/* Everything that turns a response into pixels, split out so a cache hit and a
+   network reply paint through identical code. */
+function paint(d) {
+  const rows = $("#rows");
+  hideBanner();
   renderCount(d);
   renderFresh(d.courses);
   rows.innerHTML = d.courses.length
     ? d.courses.map(rowHTML).join("")
-    : `<div class="empty"><b>Nothing matches</b>Try removing a filter.</div>`;
+    : emptyHTML();
   renderPager(d);
   delete rows.dataset.loading;
   rows.removeAttribute("aria-busy");
+
+  /* Speculate exactly one level deep: details are prefetched only for a list
+     actually on screen, never for a list that was itself a guess. Two levels of
+     speculation multiply -- three hovered filters would become 78 requests for
+     one page nobody has looked at yet.
+
+     Deferred, and cancelled if another navigation lands first. Firing 25
+     requests the instant the list paints puts them in front of whatever the
+     user does next: against one small database instance they are not free, and
+     the click they were meant to speed up ends up queued behind them. Nobody
+     opens a row in the first third of a second anyway -- they are still reading
+     titles -- so this costs the prefetch nothing and buys the interactive path
+     a clear runway. */
+  navGen++;
+  clearTimeout(prefetchTimer);
+  const gen = navGen;
+  prefetchTimer = setTimeout(() => {
+    if (gen === navGen) prefetchDetails(d.courses.map(c => c.id));
+  }, 400);
+}
+
+async function load(retrying = false) {
+  const mine = ++seq;
+  const rows = $("#rows");
+
+  // A hover already answered this exact question, so there is nothing to wait
+  // for. Painting synchronously matters: an await here would push the render
+  // to the next microtask and reintroduce a frame of blank that the whole
+  // prefetch exists to remove.
+  const qs = queryString();
+  const hit = listCache.get(qs);
+  if (hit) { if (inflight) inflight.abort(); paint(hit); return; }
+
+  if (inflight) inflight.abort();
+
+  /* A hover started this exact request and it has not landed yet -- the usual
+     case, since clicking takes less time than fetching. Join it rather than
+     starting a duplicate beside it.
+
+     But join it with a deadline. A guess must never make a real request slower
+     than not guessing would have: the prefetch is competing with everything
+     else this page speculatively fired, so it can be slower than a fresh
+     request would be, and waiting the full 8s timeout on one would be far worse
+     than never having hovered. Past the deadline this abandons the guess and
+     fetches normally; the prefetch still lands in the cache for later. */
+  const pending = listPending.get(qs);
+  if (pending) {
+    rows.dataset.loading = "1";
+    rows.setAttribute("aria-busy", "true");
+    const early = await Promise.race([
+      pending.catch(() => null),
+      new Promise(r => setTimeout(() => r(null), 600)),
+    ]);
+    if (mine !== seq) return;
+    if (early) { paint(early); return; }
+  }
+
+  const ctl = new AbortController();
+  inflight = ctl;
+
+  if (!rows.children.length) rows.innerHTML = skeleton(8);
+  rows.dataset.loading = "1";
+  rows.setAttribute("aria-busy", "true");
+
+  /* Silence in front of a skeleton reads as breakage, and someone who reloads
+     to "fix" it only starts the wait over. So say something once the wait stops
+     feeling like loading.
+
+     Deliberately says nothing about WHY. An earlier version of this line named
+     a cold database as the cause, which was a guess -- measured, every query
+     answers in well under a second, so a long wait here is something else and
+     the message would have been confidently wrong. A status line may report
+     that it is waiting; it should not diagnose. */
+  const waking = setTimeout(() => {
+    if (mine === seq) showBanner("Still loading — this is taking longer than usual.");
+  }, 2500);
+  // Proves the request was actually issued. When it was not -- which is what
+  // the server logs showed -- this line is missing from the console and that
+  // alone narrows the fault to everything above it.
+  console.debug("[coursefinder] GET /courses?" + qs);
+
+  let res;
+  try {
+    res = await fetch(`${API}/courses?${qs}`, { signal: ctl.signal });
+  } catch (err) {
+    clearTimeout(waking);
+    // A superseded request is the normal case, not a failure: a newer load()
+    // is already running and owns the UI.
+    if (err.name === "AbortError") return;
+    if (mine !== seq) return;
+    delete rows.dataset.loading;
+    showBanner("Can't reach the server. Check your connection.", "error");
+    return;
+  }
+  clearTimeout(waking);
+  if (mine !== seq) return;
+
+  if (res.status === 429) {
+    // The server says how long to wait, so wait exactly that long and retry
+    // once rather than dropping the interaction on the floor. The existing
+    // rows stay on screen throughout.
+    const wait = Math.min(30, Math.max(1, parseInt(res.headers.get("retry-after") || "3", 10)));
+    delete rows.dataset.loading;
+    if (retrying) {
+      showBanner("Still too many requests. Give it a few seconds.", "error");
+      return;
+    }
+    showBanner(`Too many requests — retrying in ${wait}s.`);
+    setTimeout(() => { if (mine === seq) load(true); }, wait * 1000);
+    return;
+  }
+
+  if (!res.ok) {
+    delete rows.dataset.loading;
+    showBanner(`Something went wrong (${res.status}). Try again in a moment.`, "error");
+    return;
+  }
+
+  const d = await res.json();
+  if (mine !== seq) return;
+
+  listCache.set(qs, d);
+  paint(d);
 }
 
 /* Detail is fetched on demand, not preloaded: 10,156 detail payloads would be
@@ -839,12 +1156,27 @@ async function load() {
 async function loadDetail(id) {
   const slot = $(`#d-${id}`);
   if (!slot) return;
-  const detail = await (await fetch(`${API}/courses/${id}`)).json();
+  // Usually already resolved, or at least already in flight, because the list
+  // paint kicked off a prefetch for every row on screen.
+  let detail;
+  try {
+    detail = await fetchDetail(id);
+  } catch (err) {
+    slot.innerHTML = `<div class="detail"><div class="blurb">${
+      err.status === 429
+        ? "Too many requests just now — close this and reopen it in a moment."
+        : "Couldn't load this course."}</div></div>`;
+    return;
+  }
   const secs = detail.sections || [];
   let sparkHTML = "";
   const tracked = secs[0];
   if (tracked) {
-    const mv = await (await fetch(`${API}/sections/${tracked.crn}/movement`)).json();
+    // Movement arrives inside the detail payload. It used to be a second
+    // request, and it could not be issued until this one returned -- the CRN
+    // above is what names it. Two dependent calls over a ~300ms link cost
+    // ~1.2s to open one row; the server runs the same two queries ~1ms apart.
+    const mv = detail.movement || {};
     const series = (mv.history || []).map(h => h.open_seats).filter(v => v != null);
     const ob = mv.observed;
     if (series.length >= 2 && ob) {
@@ -924,32 +1256,128 @@ async function loadDetail(id) {
     </div></div>`;
 }
 
-async function boot() {
-  const opts = await (await fetch(`${API}/courses/filters?term=${state.term}`)).json();
-  const sel = $("#fac");
-  sel.length = 1;
-  opts.faculties.forEach(f => {
-    const o = document.createElement("option");
-    o.value = f; o.textContent = f.replace(/&amp;/g, "&").replace(/^Faculty of /, "");
-    sel.append(o);
-  });
-  load();
+/* Nothing here is allowed to fail quietly.
+
+   load() is async and was called bare, so any throw inside it became an
+   unhandled rejection: no banner, no console entry anyone would look for, and a
+   page that sits on a skeleton forever. It hid a real bug for three rounds of
+   guessing -- the server logs showed /courses simply never being requested, and
+   the page had no way to say why.
+
+   A failure the user can see is worth more than a failure that is merely
+   handled, because the report that comes back names the cause. */
+addEventListener("unhandledrejection", e => {
+  console.error("[coursefinder] unhandled:", e.reason);
+});
+
+/* The address bar is state too.
+
+   Opening a course used to change nothing in the URL, so nobody could send
+   anyone "look at this one" -- and a crawler had exactly one page to look at.
+   The server now answers /course/COMP-250 with real HTML for that course; this
+   is the other half, keeping the URL and the open row in step once the script
+   takes over.
+
+   The path is the only source of truth read here. A hash or a query string
+   would work for people and not for search engines, which is half the reason
+   this exists. */
+const COURSE_PATH = /^\/course\/([A-Za-z]{2,4}-?[A-Za-z0-9]{3,5})\/?$/;
+
+function courseFromURL() {
+  const m = location.pathname.match(COURSE_PATH);
+  return m ? m[1].toUpperCase() : null;
 }
+
+/* Push or replace, and only when it actually changed -- a fresh entry per
+   render would make Back walk through every filter click one at a time. */
+function syncURL(replace = false) {
+  const path = state.open ? `/course/${state.open}` : "/";
+  if (location.pathname === path) return;
+  history[replace ? "replaceState" : "pushState"]({ open: state.open }, "", path);
+}
+
+addEventListener("popstate", () => {
+  // Back and Forward move between courses without refetching the list.
+  const id = courseFromURL();
+  state.open = id;
+  load().then(() => { if (state.open) loadDetail(state.open); });
+});
+
+function boot() {
+  // A course page was served for this URL, so open it rather than making the
+  // visitor find the row again in a list they did not ask for.
+  //
+  // Searching for it is what puts it on screen at all: the default list is the
+  // top 25 by rating, and an arbitrary course is almost never in it. Without
+  // this the row to expand would not exist and the panel would open onto
+  // nothing. The search box shows the code, so the page also explains itself --
+  // this is a search for one course, and clearing it returns to browsing.
+  const deep = courseFromURL();
+  if (deep) {
+    state.open = deep;
+    state.q = deep;
+    $("#q").value = deep;
+  }
+
+  // Courses first, and not behind an await. The faculty list is a convenience;
+  // the course table is the point. Awaiting the options here made these two
+  // independent requests serial, so the page cost filters + courses instead of
+  // max(filters, courses) -- and when /courses/filters stalled, load() was
+  // never reached at all and the table simply never appeared.
+  //
+  // await is for dependency. Nothing in load() reads `opts`, so there was no
+  // dependency to honour here, only a waterfall to remove.
+  load().then(() => {
+    if (state.open) loadDetail(state.open);
+  }).catch(err => {
+    // The detail goes to the console, where it is diagnostic. The screen gets
+    // plain language and something to do about it -- a visitor has no use for
+    // an exception string, and a page that prints one reads as broken beyond
+    // the one thing that actually broke.
+    console.error("[coursefinder] load() failed:", err);
+    showBanner("Couldn't load courses just now. Reloading usually fixes it.", "error");
+  });
+
+  getJSON(`/courses/filters?term=${state.term}`, 8000)
+    .then(opts => {
+      const sel = $("#fac");
+      sel.length = 1;
+      opts.faculties.forEach(f => {
+        const o = document.createElement("option");
+        o.value = f; o.textContent = f.replace(/&amp;/g, "&").replace(/^Faculty of /, "");
+        sel.append(o);
+      });
+    })
+    .catch(() => { /* dropdown stays at "Any faculty" */ });
+}
+
+/* Hover primes the list a click would ask for.
+
+   No dwell delay. Dwell exists to suppress fetches from a mouse merely passing
+   over a control, but the budget it spends is the only thing of value here:
+   hover-to-click is ~300ms and the request takes ~640ms, so waiting even 150ms
+   halves the head start. Suppressing waste is worth nothing until the waste
+   costs something -- add a delay when 429s show up in the logs, not before. */
+$("#filters").addEventListener("pointerover", e => {
+  const chip = e.target.closest("[data-f]"); if (!chip) return;
+  const { f, v } = chip.dataset;
+  prefetchList(queryString(nextState(f, v)));
+});
 
 $("#filters").addEventListener("click", e => {
   // [data-f] not .chip -- the credit and level options are <button>s inside a
   // .seg group, and only this attribute marks something as a filter.
   const chip = e.target.closest("[data-f]"); if (!chip) return;
   const { f, v } = chip.dataset;
-  if (f === "credits" || f === "level") {          // single-select: the API takes one
-    state[f] = state[f] === v ? null : v;
+  if (f === "credits" || f === "level") {          // multi-select: any of these
+    state[f] = state[f].includes(v) ? state[f].filter(x => x !== v) : [...state[f], v];
     chip.parentElement.querySelectorAll("[data-f]").forEach(x =>
-      x.setAttribute("aria-pressed", String(x.dataset.v === state[f])));
+      x.setAttribute("aria-pressed", String(state[f].includes(x.dataset.v))));
   } else {
     state[f] = state[f] ? 0 : 1;
     chip.setAttribute("aria-pressed", String(!!state[f]));
   }
-  state.offset = 0; state.open = null; load();
+  state.offset = 0; state.open = null; scheduleLoad();
 });
 let qTimer;
 $("#q").addEventListener("input", e => {
@@ -972,6 +1400,21 @@ addEventListener("keydown", e => {
   }
 });
 
+/* Push state back onto the controls.
+
+   Removing a filter from the empty state changes `state` but not the chip that
+   set it, and a chip still reading as pressed while its filter is gone is worse
+   than the dead end was -- the page would be lying about what it is showing. */
+function syncControls() {
+  $$("[data-f]").forEach(x => {
+    const { f, v } = x.dataset;
+    x.setAttribute("aria-pressed", String(
+      (f === "credits" || f === "level") ? state[f].includes(v) : !!state[f]));
+  });
+  $("#fac").value = state.faculty; markSet($("#fac"), state.faculty);
+  $("#start").value = state.start; markSet($("#start"), state.start);
+}
+
 function markSet(sel, on) {
   // Colour the whole control when it holds a value, so an active dropdown is
   // as visible as a pressed chip.
@@ -981,20 +1424,45 @@ function markSet(sel, on) {
 // re-sorted list is a different hundred courses.
 $("#fac").addEventListener("change", e => {
   state.faculty = e.target.value; markSet(e.target, e.target.value);
-  state.offset = 0; state.open = null; load();
+  state.offset = 0; state.open = null; scheduleLoad();
 });
 $("#start").addEventListener("change", e => {
   state.start = e.target.value; markSet(e.target, e.target.value);
-  state.offset = 0; state.open = null; load();
+  state.offset = 0; state.open = null; scheduleLoad();
 });
 $$("[data-s]").forEach(b => b.addEventListener("click", () => {
   if (b.dataset.s === state.sort) return;
   state.sort = b.dataset.s;
   $$("[data-s]").forEach(x =>
     x.setAttribute("aria-pressed", String(x.dataset.s === state.sort)));
-  state.offset = 0; state.open = null; load();
+  state.offset = 0; state.open = null; scheduleLoad();
 }));
 $("#rows").addEventListener("click", e => {
+  // Dropping a constraint from the empty state. Handled here rather than on the
+  // controls themselves because this is where the user is looking when they
+  // discover the thing is excluding what they wanted.
+  const drop = e.target.closest("[data-drop]");
+  if (drop) {
+    e.stopPropagation();
+    const k = drop.dataset.drop, v = drop.dataset.dropv;
+    if (k === "all") {
+      state.q = ""; $("#q").value = "";
+      state.level = []; state.credits = []; state.seats = 0;
+      state.faculty = ""; state.start = "";
+    } else if (k === "q") {
+      state.q = ""; $("#q").value = "";
+    } else if (k === "level" || k === "credits") {
+      state[k] = state[k].filter(x => x !== v);
+    } else if (k === "seats") {
+      state.seats = 0;
+    } else {
+      state[k] = "";
+    }
+    syncControls();
+    state.offset = 0; state.open = null; load();
+    return;
+  }
+
   // A requirement chip navigates instead of toggling the row it sits in.
   const req = e.target.closest(".req[data-goto]");
   if (req && req.dataset.goto) {
@@ -1007,6 +1475,7 @@ $("#rows").addEventListener("click", e => {
   const card = e.target.closest(".card"); if (!card) return;
   const id = card.dataset.id;
   state.open = state.open === id ? null : id;
+  syncURL();
   load().then(() => { if (state.open) loadDetail(state.open); });
 });
 $("#terms").addEventListener("click", e => {

@@ -2,6 +2,8 @@ from datetime import datetime
 from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.schemas.sections import MovementResponse
+
 class CourseFilters(BaseModel):
     subject: str | None = None
     course_id: str | None = None
@@ -9,6 +11,11 @@ class CourseFilters(BaseModel):
     keywords: str | None = None
 
     credits: float | None = Field(None, ge=0, le=30)
+    # Repeatable: ?levels=200&levels=300. Kept alongside min/max rather than
+    # replacing them, so existing links and the API's range semantics still
+    # work; when both are given, the explicit set wins.
+    credits_any: list[float] | None = Field(None, max_length=12)
+    levels: list[int] | None = Field(None, max_length=9)
     min_level: int | None = Field(None, ge=100, le=900)
     max_level: int | None = Field(None, ge=100, le=900)
     undergrad_only: bool = True
@@ -160,6 +167,13 @@ class CourseDetail(BaseModel):
     sections: list[SectionSummary] = []
     requirements: list[Requirement] = []
     unlocks: list[Unlocks] = []
+
+    # Seat history for the first section, inlined rather than left to a second
+    # request. The client needed a CRN from this payload before it could ask
+    # for movement, so the two calls were serial across a ~300ms link -- while
+    # here the same pair of queries are ~1ms apart. Null when the course has no
+    # sections in this term, or none has been swept twice yet.
+    movement: MovementResponse | None = None
 
 
 class SubjectOption(BaseModel):
