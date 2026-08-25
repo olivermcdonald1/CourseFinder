@@ -169,7 +169,8 @@ body{
 .deck{position:sticky; top:0; z-index:30; background:var(--bg);
       border-bottom:1px solid var(--hair)}
 
-.searchrow{position:relative; padding-bottom:10px}
+.searchrow{display:flex; align-items:center; gap:8px; padding-bottom:10px}
+.qbox{position:relative; flex:1; min-width:0}
 #q{
   width:100%; height:44px; padding:0 96px 0 14px; font:400 var(--t-body) var(--sans);
   color:var(--ink); background:var(--surface); border:1px solid var(--hair-2);
@@ -455,6 +456,94 @@ footer a:hover{color:var(--ink)}
   .tag{display:none}
 }
 @media (min-width:961px){.inline-stats{display:none}}
+/* ── narrow screens ──────────────────────────────────────────────────────────
+   The phone layout is not the desktop one with smaller gaps. Two things are
+   actually different: the controls have to earn their space against the list,
+   and a course title has to be readable rather than merely present. */
+.fbar{display:none}
+
+@media (max-width:700px){
+  /* Collapsed by default. 203px of filters above the fold meant a phone showed
+     two courses; the list is what people came for, and most visitors never
+     touch a filter at all. */
+  /* Beside the search box. Sized to match it so the row reads as one control
+     group rather than a button parked next to a field. */
+  .fbar{
+    display:inline-flex; align-items:center; gap:7px; flex:none;
+    padding:0 13px; height:44px; cursor:pointer;
+    font:inherit; font-size:var(--t-meta); font-weight:550; color:var(--ink-2);
+    background:var(--surface); border:1px solid var(--hair-2); border-radius:8px;
+  }
+  .fbar[aria-expanded="true"]{border-color:var(--ink-2); color:var(--ink)}
+  .fbar .fchev{font-size:14px; color:var(--muted); line-height:1}
+  .fbar[aria-expanded="true"] .fchev{color:var(--ink)}
+  .fbar .fcount{
+    font-family:var(--mono); font-size:11px; padding:1px 6px; border-radius:999px;
+    background:var(--ink); color:var(--surface);
+  }
+
+  /* The wordmark is branding, and on a phone it was a 45px row of it above the
+     thing people came for. Small, on the same line as the term switcher, still
+     legible as a name. The tagline goes -- it explains the site to someone who
+     has already arrived and decided to use it. */
+  /* One row, and everything in it sized to make that true. Wrapping put the
+     theme button on a line of its own, which cost 32px to say nothing. */
+  /* Wraps, but only the freshness stamp does -- order:9 sends it last, and the
+     other three are sized to fit one line. It gets a 14px line of its own
+     rather than being clipped to "se", because a seat count with no age on it
+     is just a number and this is the thing that says the data is real. */
+  .top{padding:9px 0 7px; gap:2px 8px; align-items:center}
+  .mark{font-size:15px; letter-spacing:-.02em}
+  .tag{display:none}
+  .top .spacer{display:none}
+  /* The year is implied by the term switcher having exactly two options, and
+     both are visible at once -- so the digits are 40px of no information. */
+  #terms{margin-left:auto; flex:none}
+  #terms button{padding:0 9px; font-size:12px}
+  #terms button::after{content:none}
+  .fresh{order:9; flex:none; font-size:10px}
+  /* Icon, not a word: "Theme" spent 70px explaining a control nobody needs
+     labelled once they have pressed it once. */
+  #theme{font-size:0; padding:0 11px}
+  #theme::after{content:"\25D0"; font-size:14px}
+  .filters[data-open="0"]{display:none}
+  .filters{
+    display:grid; grid-template-columns:1fr 1fr; gap:8px;
+    margin-top:9px; padding:12px; align-items:stretch;
+    background:var(--surface); border:1px solid var(--hair); border-radius:8px;
+  }
+  /* Each control owns a full row or half of one, so the group reads as a form
+     rather than as words that happened to wrap. */
+  .filters .chip{grid-column:1 / -1}
+  .filters .seg{grid-column:1 / -1; display:flex}
+  .filters .seg button{flex:1}
+  .filters .sel{grid-column:1 / -1; display:block}
+  /* max-width:190px keeps a faculty name from stretching the desktop toolbar.
+     Here the wrapper is full width and the arrow is drawn against ITS right
+     edge, so the cap left the arrow floating in space a hundred pixels from
+     the box it belongs to. */
+  .filters .sel select{width:100%; max-width:none}
+  .filters .spacer{display:none}
+  .sortwrap{grid-column:1 / -1; display:flex; align-items:center; gap:9px}
+  .sortwrap .seg{flex:1}
+
+  /* The title had to share its line with the seat badge and lost -- "Circuitry
+     of the Huma...". Two lines, full width, badge underneath with the rest of
+     the facts: the name of the course is the thing being chosen between. */
+  .card, .skel{grid-template-columns:1fr; gap:6px; align-items:start}
+  .c-title{
+    white-space:normal; display:-webkit-box; -webkit-line-clamp:2;
+    -webkit-box-orient:vertical; overflow:hidden; font-size:16px;
+  }
+  /* Kept to one line, ellipsed. It is the supporting detail -- code, credits,
+     department -- and letting it wrap orphaned "1 section" onto a line of its
+     own, costing a row of height on the majority of cards for no information. */
+  .c-meta{white-space:nowrap}
+  .seatcell{flex-direction:row; justify-content:flex-start; margin-top:2px}
+  .card{padding:12px 14px}
+  .thead{display:none}          /* column labels for columns that no longer exist */
+}
+
 @media (max-width:560px){
   .kbd{display:none}
   .fresh{order:9}          /* freshness reads better under the controls here */
@@ -487,11 +576,26 @@ footer a:hover{color:var(--ink)}
 <div class="deck">
   <div class="wrap">
     <div class="searchrow">
+      <!-- The input and its two overlays share a positioning context of their
+           own. Without it the clear button anchors to the row, which on narrow
+           screens now also contains the filter toggle -- putting the x on top
+           of it instead of inside the field. -->
+      <span class="qbox">
       <input id="q" type="search" autocomplete="off" spellcheck="false"
              placeholder="Search anything — comp 250, calculus, italian, climate, machine learning"
+             data-short="Search courses, profs, topics"
              aria-label="Search courses">
       <span class="kbd"><span>⌘</span><span>K</span></span>
       <button id="qclear" type="button" aria-label="Clear search">×</button>
+      </span>
+      <!-- Narrow screens only. Beside the search box rather than under it: as
+           its own row it cost 43px plus margins for a single control. -->
+      <button class="fbar" id="ftoggle" type="button"
+              aria-expanded="false" aria-controls="filters">
+        <span class="fchev" aria-hidden="true">&#9776;</span>
+        <span class="flabel">Filters</span>
+        <span class="fcount" id="fcount" hidden></span>
+      </button>
     </div>
 
     <div class="filters" id="filters">
@@ -1018,6 +1122,7 @@ function emptyHTML() {
 function paint(d) {
   const rows = $("#rows");
   hideBanner();
+  syncFilterCount();
   renderCount(d);
   renderFresh(d.courses);
   rows.innerHTML = d.courses.length
@@ -1358,6 +1463,40 @@ function boot() {
    hover-to-click is ~300ms and the request takes ~640ms, so waiting even 150ms
    halves the head start. Suppressing waste is worth nothing until the waste
    costs something -- add a delay when 429s show up in the logs, not before. */
+/* The toggle, and the count on it.
+
+   The count is the point: collapsed controls that hide an active filter are
+   how someone ends up staring at a short list wondering why. A number on the
+   button means the state is never invisible, only folded away. */
+const filtersEl = $("#filters");
+filtersEl.dataset.open = "0";
+
+/* The long placeholder lists five example searches, which is the whole point of
+   it -- it teaches that the box takes more than a course code. On a phone the
+   box cuts it off mid-word ("...calculus, i"), which teaches nothing and looks
+   broken, so narrow screens get a version that fits. */
+function syncPlaceholder() {
+  const q = $("#q");
+  q.placeholder = matchMedia("(max-width:700px)").matches
+    ? q.dataset.short : q.getAttribute("data-long");
+}
+$("#q").setAttribute("data-long", $("#q").placeholder);
+syncPlaceholder();
+matchMedia("(max-width:700px)").addEventListener("change", syncPlaceholder);
+
+function syncFilterCount() {
+  const n = activeFilters().filter(a => a.k !== "q").length;
+  const badge = $("#fcount");
+  badge.textContent = n;
+  badge.hidden = n === 0;
+}
+
+$("#ftoggle").addEventListener("click", () => {
+  const open = filtersEl.dataset.open === "1";
+  filtersEl.dataset.open = open ? "0" : "1";
+  $("#ftoggle").setAttribute("aria-expanded", String(!open));
+});
+
 $("#filters").addEventListener("pointerover", e => {
   const chip = e.target.closest("[data-f]"); if (!chip) return;
   const { f, v } = chip.dataset;
