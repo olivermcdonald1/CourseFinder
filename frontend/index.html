@@ -380,6 +380,17 @@ main.wrap{padding-top:12px}
   border:0; padding:0; cursor:pointer; text-decoration:underline;
 }
 .linky:hover{color:var(--ink)}
+.onlybar{
+  display:flex; align-items:center; gap:10px; margin-bottom:7px;
+  padding:8px 13px; border-radius:7px; font-size:var(--t-meta);
+  color:var(--ink-2); background:var(--surface); border:1px solid var(--hair);
+}
+.onlybar button{
+  font:inherit; font-size:var(--t-meta); color:var(--ink-2); cursor:pointer;
+  background:none; border:0; padding:0; margin-left:auto;
+  border-bottom:1px solid var(--hair-2);
+}
+.onlybar button:hover{color:var(--ink); border-color:var(--ink)}
 .empty{padding:44px 16px; text-align:center; color:var(--muted);
        background:var(--surface); border:1px solid var(--hair); border-radius:7px}
 .empty b{display:block; color:var(--ink); font-size:var(--t-title);
@@ -713,6 +724,13 @@ footer a:hover{color:var(--ink)}
   <!-- Non-destructive: a transient error must not throw away the results the
        student was reading. -->
   <div class="banner" id="banner" role="status" hidden></div>
+  <!-- Shown only when the URL named a single course. Without it the list is
+       narrowed to one row with nothing on screen explaining why, and no way
+       back except editing the address bar. -->
+  <div class="onlybar" id="onlybar" hidden>
+    <span>Showing one course</span>
+    <button type="button" id="onlyclear">Show all courses</button>
+  </div>
   <div class="list" id="rows"></div>
   <nav class="pager" id="pager" aria-label="Pagination" hidden>
     <button class="pbtn" id="prev" type="button">&larr; Previous</button>
@@ -777,7 +795,13 @@ async function getJSON(path, timeout = 0) {
    the list can only show one at once, so comparing two levels meant running two
    searches and merging them by memory. */
 const state = { credits: [], level: [], seats: 0, start: "", faculty: "",
-                sort: "rating", open: null, offset: 0, q: "", term: "202609" };
+                sort: "rating", open: null, offset: 0, q: "", term: "202609",
+                // Set only when the URL names one course. Deliberately NOT the
+                // search box: typing it in there meant clicking a row, hitting
+                // reload, and finding yourself inside a search you never made.
+                // Arriving at a link and searching are different things and
+                // should not look identical.
+                only: null };
 
 /* One box, three meanings -- the same shape the deleted regex tier used.
    "COMP 250" is a lookup, "COMP" is a subject browse, anything else is a topic.
@@ -804,6 +828,13 @@ function searchParams(q) {
 function queryString(st = state) {
   const p = new URLSearchParams({ undergrad_only: "true", limit: String(PAGE),
                                   term: st.term });
+  // A named course is a lookup, so let unreviewed and graduate courses through
+  // -- hiding the exact thing someone was linked to would be absurd.
+  if (st.only) {
+    p.set("course_id", st.only);
+    p.set("reviewed_only", "false");
+    p.set("undergrad_only", "false");
+  }
   for (const [k, v] of Object.entries(searchParams(st.q))) p.set(k, v);
   // Repeated params, not a range: min/max can only describe a span, so picking
   // 100 and 300 would silently sweep in every 200-level course.
@@ -1214,6 +1245,9 @@ function emptyHTML() {
    network reply paint through identical code. */
 function paint(d) {
   const rows = $("#rows");
+  const bar = $("#onlybar");
+  bar.hidden = !state.only;
+  if (state.only) bar.firstElementChild.textContent = `Showing ${state.only} only`;
   hideBanner();
   syncFilterCount();
   renderCount(d);
@@ -1515,14 +1549,11 @@ addEventListener("popstate", () => {
 function openFromURL() {
   const deep = courseFromURL();
   if (!deep) return;
-  // Searching for it is what puts it on screen at all: the default list is the
-  // top 25 by rating, and an arbitrary course is almost never in it. Without
-  // this the row to expand would not exist and the panel would open onto
-  // nothing. The search box shows the code, so the page also explains itself --
-  // this is a search for one course, and clearing it returns to browsing.
+  state.only = deep;
+  // Narrowing to it is what puts it on screen at all: the default list is the
+  // top 25 by rating, and an arbitrary course is almost never in it, so there
+  // would be no row to expand and the panel would open onto nothing.
   state.open = deep;
-  state.q = deep;
-  $("#q").value = deep;
 }
 
 function boot() {
@@ -1636,6 +1667,9 @@ $("#filters").addEventListener("click", e => {
 let qTimer;
 $("#q").addEventListener("input", e => {
   state.q = e.target.value;
+  // Typing is a new question; it should not be answered inside a list narrowed
+  // to one course by a link followed earlier.
+  if (state.only) { state.only = null; state.open = null; syncURL(); }
   // Debounced: one request per pause, not one per keystroke.
   clearTimeout(qTimer);
   qTimer = setTimeout(() => { state.offset = 0; state.open = null; load(); }, 250);
@@ -1751,12 +1785,19 @@ $("#terms").addEventListener("click", e => {
   state.term = b.dataset.term;
   $("#terms").querySelectorAll("button").forEach(x =>
     x.setAttribute("aria-pressed", String(x.dataset.term === state.term)));
-  state.open = null; state.offset = 0;
+  state.open = null; state.only = null; state.offset = 0;
   // The open course belonged to the term being left. Put the address bar back
   // to the list, or a refresh would deep-link into a course this term may not
   // even offer.
   syncURL(true);
   boot();                      // faculty list is term-scoped, so refetch it
+});
+$("#onlyclear").addEventListener("click", () => {
+  // Back to browsing. The panel goes too -- the course it belonged to is about
+  // to fall out of the list it was the only member of.
+  state.only = null; state.open = null; state.offset = 0;
+  syncURL();
+  load();
 });
 $("#prev").addEventListener("click", () => turnPage(-1));
 $("#next").addEventListener("click", () => turnPage(1));
