@@ -388,8 +388,32 @@ main.wrap{padding-top:12px}
    driven by data-more, set on scroll, so it disappears once you reach the end
    rather than implying content that is not there. scroll-snap keeps a swipe
    from stopping halfway through a chip. */
+/* On a phone the whole row scrolls as one, chips then the dropdown at the end.
+   Giving the dropdown a fixed place in the row left 234px of a 390px screen for
+   the chips -- two of them -- so the escape hatch was crowding out the thing it
+   is an escape from. Scrolling together, the chips get the full width and the
+   dropdown is what you find at the end of them, which is also when you would
+   want it. */
+.subjectrow{
+  display:flex; align-items:center; gap:8px; padding-bottom:10px;
+  overflow-x:auto; scrollbar-width:none; -ms-overflow-style:none;
+  scroll-snap-type:x proximity;
+}
+.subjectrow::-webkit-scrollbar{display:none}
+.subjectrow[data-more="end"]  {mask-image:linear-gradient(to right,#000 calc(100% - 34px),transparent)}
+.subjectrow[data-more="start"]{mask-image:linear-gradient(to left, #000 calc(100% - 34px),transparent)}
+.subjectrow[data-more="both"] {mask-image:linear-gradient(to right,transparent,#000 34px,#000 calc(100% - 34px),transparent)}
+.subjectrow .subjects{padding-bottom:0; flex:none; overflow:visible; mask-image:none}
+/* Never scrolls away with the chips: it is the escape hatch for when none of
+   them is the one you want, so it has to be visible while you look at them. */
+.subjsel{flex:none}
+/* Narrow on a phone. At its natural width it took 130px of 390 and left room
+   for two and a half chips -- the escape hatch was crowding out the thing it
+   is an escape from. The chips scroll; this does not, so it can afford to be
+   small and the strip cannot. */
+.subjsel select{max-width:104px; font-size:12px; padding:0 22px 0 8px}
 .subjects{
-  display:flex; gap:6px; padding-bottom:10px; overflow-x:auto;
+  display:flex; gap:6px; overflow-x:auto;
   scrollbar-width:none; -ms-overflow-style:none;
   scroll-snap-type:x proximity; scroll-padding-left:2px;
 }
@@ -420,15 +444,18 @@ main.wrap{padding-top:12px}
    Here they are what they actually are: a list of links into the catalogue.
    Quieter than the controls beneath, and visibly a different kind of thing. */
 @media (min-width:701px){
+  .subjectrow{align-items:baseline; padding-bottom:11px; justify-content:flex-start;
+              overflow:visible; mask-image:none}
+  /* Sized to its contents, not stretched: flex:1 pushed the dropdown to the far
+     right edge of a 1280px screen, half a metre from the chips it belongs to. */
+  .subjectrow .subjects{flex:0 1 auto}
   .subjects{
     align-items:baseline; gap:0 14px; flex-wrap:wrap; overflow:visible;
-    mask-image:none; padding-bottom:11px;
+    mask-image:none; padding-bottom:0;
   }
-  .subjects::before{
-    content:"Browse"; flex:none; margin-right:2px;
-    font:500 10px/1 var(--sans); letter-spacing:.09em; text-transform:uppercase;
-    color:var(--faint);
-  }
+  .subjsel select{height:26px; font-size:12px; max-width:150px; padding:0 24px 0 9px}
+  /* No label. The dropdown sitting at the end of the row already says these
+     are subjects, and a word in front of them only made the line longer. */
   .subj{
     background:none; border:0; border-radius:0; padding:0; height:auto;
     font-size:13px; color:var(--muted); gap:4px;
@@ -454,6 +481,8 @@ main.wrap{padding-top:12px}
   border-bottom:1px solid var(--hair-2);
 }
 .onlybar button:hover{color:var(--ink); border-color:var(--ink)}
+.sortm{display:none}
+@media (max-width:700px){ .sortm{display:block} }
 .empty{padding:44px 16px; text-align:center; color:var(--muted);
        background:var(--surface); border:1px solid var(--hair); border-radius:7px}
 .empty b{display:block; color:var(--ink); font-size:var(--t-title);
@@ -669,7 +698,13 @@ footer a:hover{color:var(--ink)}
   .c-meta{white-space:nowrap}
   .seatcell{flex-direction:row; justify-content:flex-start; margin-top:2px}
   .card{padding:12px 14px}
-  .thead{display:none}          /* column labels for columns that no longer exist */
+  /* The column labels go -- those columns do not exist here. The row itself
+     stays: it carries the result count, which is the only thing telling you a
+     filter did something, and now the sort. */
+  .thead{display:flex; align-items:center; gap:10px; padding:0 2px 8px}
+  .thead > span:not(.tcount):not(.sortm){display:none}
+  .thead .tcount{flex:1; min-width:0}
+  .sortm{flex:none; margin-left:auto}
 }
 
 @media (max-width:560px){
@@ -734,7 +769,17 @@ footer a:hover{color:var(--ink)}
          to think the site knew anything about theirs. Every engaged visitor's
          first move was to type a subject; this is that move, made visible.
          Ordered by student reviews, so it opens with what people ask for. -->
-    <div class="subjects" id="subjects" hidden></div>
+    <div class="subjectrow" id="subjectrow" hidden>
+      <div class="subjects" id="subjects"></div>
+      <!-- The chips are twelve shortcuts out of 181 subjects, ranked by how many
+           reviews each has drawn. ENGL is seventeenth, so it is not among them.
+           This sits with them rather than down in the filters, because it
+           answers the question the chips raise -- "where is mine?" -- and that
+           question is asked here, not two rows later. -->
+      <span class="sel subjsel"><select id="subj" aria-label="All subjects">
+        <option value="">All subjects</option>
+      </select></span>
+    </div>
 
     <div class="filters" id="filters">
       <button class="chip" data-f="seats" data-v="1" aria-pressed="false"
@@ -781,6 +826,15 @@ footer a:hover{color:var(--ink)}
       <span class="tcount">
         <span class="big" id="n">—</span><span id="sub">courses</span><span class="shown" id="shown"></span>
       </span>
+      <!-- Phones only (CSS hides it above 700px). Sort is intent, not a filter:
+           one visitor sorted by Easiest 25 seconds after landing and then read
+           225 courses that way. On a phone that control was inside the
+           collapsed Filters panel, so that session could not have happened. -->
+      <span class="sel sortm"><select id="sortm" aria-label="Sort">
+        <option value="rating">Best rated</option>
+        <option value="easiest">Easiest</option>
+        <option value="popular">Most reviewed</option>
+      </select></span>
       <!-- No "?" glyph: the column is 60px and it wrapped onto its own line.
            The explanation lives on each cell instead, which is where the
            question gets asked -- hovering 4.96 says what the raw average and
@@ -1658,11 +1712,28 @@ function boot() {
   getJSON(`/courses/filters?term=${state.term}`, 8000)
     .then(opts => {
       renderSubjects(opts.subjects || []);
+      // Alphabetical here, not by popularity: this is the list you scan for a
+      // code you already know, and ranked order makes that harder, not easier.
+      const subjSel = $("#subj");
+      subjSel.length = 1;
+      [...(opts.subjects || [])].sort((a, b) => a.code.localeCompare(b.code))
+        .forEach(x => {
+          const o = document.createElement("option");
+          o.value = x.code;
+          o.textContent = `${x.code} · ${x.count} course${x.count === 1 ? "" : "s"}`;
+          subjSel.append(o);
+        });
+      subjSel.value = state.subject || "";
+      markSet(subjSel, state.subject);
       const sel = $("#fac");
       sel.length = 1;
       opts.faculties.forEach(f => {
         const o = document.createElement("option");
-        o.value = f; o.textContent = f.replace(/&amp;/g, "&").replace(/^Faculty of /, "");
+        // The &amp; patch that used to be here is gone: the API decodes entities
+        // now, so doing it again would be a second guess at data that has
+        // already been cleaned -- and it only ever covered this one dropdown
+        // while every card below it showed the raw entity.
+        o.value = f; o.textContent = f.replace(/^Faculty of /, "");
         sel.append(o);
       });
     })
@@ -1780,6 +1851,8 @@ function syncControls() {
   });
   $$("[data-subj]").forEach(x =>
     x.setAttribute("aria-pressed", String(x.dataset.subj === state.subject)));
+  $("#sortm").value = state.sort;
+  $("#subj").value = state.subject || ""; markSet($("#subj"), state.subject);
   $("#fac").value = state.faculty; markSet($("#fac"), state.faculty);
   $("#start").value = state.start; markSet($("#start"), state.start);
 }
@@ -1791,6 +1864,14 @@ function markSet(sel, on) {
 }
 // Changing a filter or the sort invalidates the page number: offset 100 of a
 // re-sorted list is a different hundred courses.
+$("#subj").addEventListener("change", e => {
+  state.subject = e.target.value || null;
+  markSet(e.target, e.target.value);
+  $$("[data-subj]").forEach(x =>
+    x.setAttribute("aria-pressed", String(x.dataset.subj === state.subject)));
+  if (state.only) { state.only = null; syncURL(); }
+  state.offset = 0; state.open = null; scheduleLoad();
+});
 $("#fac").addEventListener("change", e => {
   state.faculty = e.target.value; markSet(e.target, e.target.value);
   state.offset = 0; state.open = null; scheduleLoad();
@@ -1799,11 +1880,22 @@ $("#start").addEventListener("change", e => {
   state.start = e.target.value; markSet(e.target, e.target.value);
   state.offset = 0; state.open = null; scheduleLoad();
 });
+$("#sortm").addEventListener("change", e => {
+  state.sort = e.target.value;
+  // The desktop segmented control is the same value in another shape, so it
+  // moves too -- a control that disagrees with the list is worse than no
+  // control, and both are in the DOM at every width.
+  $$("[data-s]").forEach(x =>
+    x.setAttribute("aria-pressed", String(x.dataset.s === state.sort)));
+  state.offset = 0; state.open = null; scheduleLoad();
+});
+
 $$("[data-s]").forEach(b => b.addEventListener("click", () => {
   if (b.dataset.s === state.sort) return;
   state.sort = b.dataset.s;
   $$("[data-s]").forEach(x =>
     x.setAttribute("aria-pressed", String(x.dataset.s === state.sort)));
+  $("#sortm").value = state.sort;
   state.offset = 0; state.open = null; scheduleLoad();
 }));
 $("#rows").addEventListener("click", e => {
@@ -1878,7 +1970,10 @@ $("#terms").addEventListener("click", e => {
 /* Which edges have more behind them. Recomputed on scroll and on resize,
    because "does this overflow" is a question about the viewport, not the list. */
 function syncSubjectFade() {
-  const el = $("#subjects");
+  // The scroller is the row on phones and nothing on desktop, where the chips
+  // wrap instead. Reading whichever actually overflows keeps one function
+  // correct at both widths.
+  const el = matchMedia("(max-width:700px)").matches ? $("#subjectrow") : $("#subjects");
   const room = el.scrollWidth - el.clientWidth;
   if (room < 4) { delete el.dataset.more; return; }
   const atStart = el.scrollLeft < 4;
@@ -1893,10 +1988,11 @@ function renderSubjects(list) {
   el.innerHTML = list.slice(0, 12).map(s =>
     `<button class="subj" type="button" data-subj="${esc(s.code)}"
        aria-pressed="false">${esc(s.code)}<b>${s.count}</b></button>`).join("");
-  el.hidden = false;
+  $("#subjectrow").hidden = false;
   syncSubjectFade();
 }
 
+$("#subjectrow").addEventListener("scroll", syncSubjectFade, { passive: true });
 $("#subjects").addEventListener("scroll", syncSubjectFade, { passive: true });
 addEventListener("resize", syncSubjectFade);
 
@@ -1908,8 +2004,7 @@ $("#subjects").addEventListener("click", e => {
   // narrowed by a link followed earlier, or on page 4 of the previous one.
   if (state.only) { state.only = null; syncURL(); }
   state.offset = 0; state.open = null;
-  $$("[data-subj]").forEach(x =>
-    x.setAttribute("aria-pressed", String(x.dataset.subj === state.subject)));
+  syncControls();
   load();
 });
 

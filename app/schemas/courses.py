@@ -82,6 +82,15 @@ class CourseSummary(BaseModel):
     # the "Best rated" ordering uses, and therefore what the list should show.
     weighted_rating: float | None = None
 
+    @field_validator("title", "faculty", "department", mode="after")
+    @classmethod
+    def _decode_entities(cls, v):
+        # The list is where these are actually read: 2,113 courses carry
+        # "Earth &amp; Planetary Sciences" in department, 471 in faculty, 46 in
+        # title. Encoded once by the scrape, escaped again on render, so the
+        # page showed "&amp;" as text.
+        return clean(v)
+
 class SearchResponse(BaseModel):
     total: int
     limit: int
@@ -170,12 +179,16 @@ class CourseDetail(BaseModel):
     logical_prerequisites: dict | None = None
 
     @field_validator("description", "prerequisites_text", "corequisites_text",
-                     "restrictions_text", mode="after")
+                     "restrictions_text", "department", "faculty", "title",
+                     mode="after")
     @classmethod
     def _strip_markup(cls, v):
-        # 7% of descriptions arrive with anchor tags from the scraped page. The
-        # client escapes what it renders, so without this those courses show
-        # their own markup as text.
+        # Two problems, one cause: the scrape stored McGill's page text already
+        # HTML-encoded. 7% of descriptions kept the page's anchor tags, and 21%
+        # of departments kept its entities -- the database holds "Earth &amp;
+        # Planetary Sciences". The client then escapes what it renders, which is
+        # right for third-party text, so that "&" became "&amp;" a second time
+        # and visitors read the literal characters "&amp;" on the page.
         return clean(v)
 
     # Filled in by the service, not read off the Course row.
@@ -210,6 +223,14 @@ class FilterOptions(BaseModel):
     term: str
     faculties: list[str]
     departments: list[str]
+
+    @field_validator("faculties", "departments", mode="after")
+    @classmethod
+    def _decode_entity_lists(cls, v):
+        # The frontend had a one-off .replace(/&amp;/g,"&") for exactly this,
+        # applied to the faculty dropdown only -- so the dropdown read correctly
+        # while the card beneath it did not. Fixed at the source instead.
+        return [clean(x) for x in v]
     subjects: list[SubjectOption]
     campuses: list[str]
     class_types: list[str]

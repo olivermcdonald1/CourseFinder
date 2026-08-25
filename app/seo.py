@@ -35,7 +35,7 @@ def _esc(text):
 
 def course_title(course):
     """"COMP 250 — Introduction to Computer Science" -- the phrase people type."""
-    return f"{course.id.replace('-', ' ')} — {course.title}"
+    return f"{course.id.replace('-', ' ')} — {clean(course.title)}"
 
 
 def course_description(course, rating=None, reviews=None):
@@ -50,7 +50,7 @@ def course_description(course, rating=None, reviews=None):
     if course.credits_text:
         bits.append(f"{course.credits_text} credits")
     if course.faculty:
-        bits.append(course.faculty)
+        bits.append(clean(course.faculty))
     lead = " · ".join(bits)
     # Straight off the ORM row, so it has not been through the schema's
     # validator -- a meta description full of anchor tags is worse than a
@@ -119,9 +119,9 @@ def crawlable_block(course, rating, difficulty, reviews, sections, instructors, 
     if course.credits_text:
         rows.append(f"<li>Credits: {_esc(course.credits_text)}</li>")
     if course.faculty:
-        rows.append(f"<li>Faculty: {_esc(course.faculty)}</li>")
+        rows.append(f"<li>Faculty: {_esc(clean(course.faculty))}</li>")
     if course.department:
-        rows.append(f"<li>Department: {_esc(course.department)}</li>")
+        rows.append(f"<li>Department: {_esc(clean(course.department))}</li>")
     if instructors:
         rows.append(f"<li>Taught by: {_esc(', '.join(instructors))}</li>")
     if course.prerequisites_text:
