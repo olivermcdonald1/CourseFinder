@@ -493,6 +493,25 @@ footer a:hover{color:var(--ink)}
      rather than being clipped to "se", because a seat count with no age on it
      is just a number and this is the thing that says the data is real. */
   .top{padding:9px 0 7px; gap:2px 8px; align-items:center}
+
+  /* The whole top stays put, not just the controls.
+
+     On a desktop the identity row scrolls away and the deck alone sticks --
+     there is room to spare and the wordmark has done its job by then. A phone
+     is different: someone arriving from a shared link lands mid-catalogue with
+     no idea what site they are on, and scrolling is how they read, so the one
+     row that says what this is would be gone by their second thumb flick.
+
+     Two stacked sticky elements rather than one wrapper around both. Wrapping
+     them would give the deck a containing block only as tall as the wrapper,
+     so it would come unstuck the moment that block scrolled past -- the exact
+     bug this is meant to fix. The deck's offset is the header's measured
+     height, published as --hdr. */
+  header{
+    position:sticky; top:0; z-index:31;
+    background:var(--bg); border-bottom:0;
+  }
+  .deck{top:var(--hdr, 64px)}
   .mark{font-size:15px; letter-spacing:-.02em}
   .tag{display:none}
   .top .spacer{display:none}
@@ -1468,6 +1487,18 @@ function boot() {
    The count is the point: collapsed controls that hide an active filter are
    how someone ends up staring at a short list wondering why. A number on the
    button means the state is never invisible, only folded away. */
+/* The header's height, measured rather than assumed.
+
+   It changes: the freshness stamp wraps to its own line only once seat data has
+   loaded, and is absent before that. A hardcoded offset would leave the deck
+   overlapping the header or floating below it for the first second of every
+   visit. */
+const headerEl = document.querySelector("header");
+const publishHeaderHeight = () =>
+  document.documentElement.style.setProperty("--hdr", `${headerEl.offsetHeight}px`);
+publishHeaderHeight();
+new ResizeObserver(publishHeaderHeight).observe(headerEl);
+
 const filtersEl = $("#filters");
 filtersEl.dataset.open = "0";
 
