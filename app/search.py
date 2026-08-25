@@ -661,10 +661,19 @@ def filter_options(session, term):
                 .distinct().order_by(column))
         return [v for v in session.execute(stmt).scalars().all()]
 
-    subjects_stmt = (select(Course.subject, func.count())
-                     .where(offered)
+    # Ordered by how many student reviews the subject has drawn, NOT by how
+    # many courses it lists. Course count ranks DENT, MIME, MUIN and EXTL at the
+    # top -- dentistry, mechanical-engineering design, music instruction and
+    # external credit -- which is a true fact about the catalogue and useless as
+    # a way in. Reviews rank MATH, MGCR, PSYC, COMP, which is what people
+    # actually typed into the search box today.
+    subjects_stmt = (select(Course.subject,
+                            func.count(),
+                            func.coalesce(func.sum(Course.review_count), 0)
+                                .label("reviews"))
+                     .where(offered, func.left(Course.code, 1) <= "4")
                      .group_by(Course.subject)
-                     .order_by(func.count().desc()))
+                     .order_by(func.coalesce(func.sum(Course.review_count), 0).desc()))
 
     section_column = lambda column: [
         v for v in session.execute(
@@ -694,8 +703,8 @@ def filter_options(session, term):
         "term": term,
         "faculties": course_column(Course.faculty),
         "departments": course_column(Course.department),
-        "subjects": [{"code": s, "count": n}
-                     for s, n in session.execute(subjects_stmt).all()],
+        "subjects": [{"code": code, "count": n}
+                     for code, n, _reviews in session.execute(subjects_stmt).all()],
         "campuses": section_column(Section.campus),
         "class_types": section_column(Section.type_of_class),
         "credit_options": [float(c) for c, _ in

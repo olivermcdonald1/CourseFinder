@@ -380,6 +380,69 @@ main.wrap{padding-top:12px}
   border:0; padding:0; cursor:pointer; text-decoration:underline;
 }
 .linky:hover{color:var(--ink)}
+/* Twelve chips are 965px wide; a phone shows 346 of them. Two thirds of the
+   row is off-screen, and a chip clipped by the viewport edge is too weak a hint
+   that it is there -- it reads as a layout accident.
+
+   So the edge fades, and only on the side that has more behind it. The mask is
+   driven by data-more, set on scroll, so it disappears once you reach the end
+   rather than implying content that is not there. scroll-snap keeps a swipe
+   from stopping halfway through a chip. */
+.subjects{
+  display:flex; gap:6px; padding-bottom:10px; overflow-x:auto;
+  scrollbar-width:none; -ms-overflow-style:none;
+  scroll-snap-type:x proximity; scroll-padding-left:2px;
+}
+.subjects::-webkit-scrollbar{display:none}
+.subjects > *{scroll-snap-align:start}
+.subjects[data-more="end"]  {mask-image:linear-gradient(to right,#000 calc(100% - 34px),transparent)}
+.subjects[data-more="start"]{mask-image:linear-gradient(to left, #000 calc(100% - 34px),transparent)}
+.subjects[data-more="both"] {mask-image:linear-gradient(to right,transparent,#000 34px,#000 calc(100% - 34px),transparent)}
+
+.subj{
+  flex:none; font:500 var(--t-meta)/1 var(--mono); letter-spacing:.02em;
+  color:var(--ink-2); background:var(--surface); cursor:pointer;
+  border:1px solid var(--hair-2); border-radius:999px; padding:0 11px;
+  height:var(--ctl); display:inline-flex; align-items:center; gap:6px;
+  transition:border-color var(--ease), color var(--ease);
+}
+.subj:hover{border-color:var(--ink-2); color:var(--ink)}
+.subj[aria-pressed="true"]{background:var(--ink); color:var(--surface); border-color:var(--ink)}
+.subj b{font-weight:400; color:var(--faint); font-size:10px}
+.subj[aria-pressed="true"] b{color:var(--surface); opacity:.6}
+
+/* ── wide screens: navigation, not another bank of chips ────────────────────
+   A phone needs tap targets, so pills are right there. A desktop already shows
+   every filter as a pill, and stacking twelve more above them turned the top of
+   the page into an undifferentiated band of capsules -- the subjects competed
+   with the filters instead of introducing them.
+
+   Here they are what they actually are: a list of links into the catalogue.
+   Quieter than the controls beneath, and visibly a different kind of thing. */
+@media (min-width:701px){
+  .subjects{
+    align-items:baseline; gap:0 14px; flex-wrap:wrap; overflow:visible;
+    mask-image:none; padding-bottom:11px;
+  }
+  .subjects::before{
+    content:"Browse"; flex:none; margin-right:2px;
+    font:500 10px/1 var(--sans); letter-spacing:.09em; text-transform:uppercase;
+    color:var(--faint);
+  }
+  .subj{
+    background:none; border:0; border-radius:0; padding:0; height:auto;
+    font-size:13px; color:var(--muted); gap:4px;
+    border-bottom:1px solid transparent;
+  }
+  .subj:hover{color:var(--ink); border-bottom-color:var(--hair-2)}
+  .subj[aria-pressed="true"]{
+    background:none; color:var(--ink); font-weight:600;
+    border-bottom-color:var(--ink);
+  }
+  .subj b{display:none}          /* the count is noise once these are links */
+  .subj[aria-pressed="true"] b{display:inline; color:var(--muted); font-weight:400}
+}
+
 .onlybar{
   display:flex; align-items:center; gap:10px; margin-bottom:7px;
   padding:8px 13px; border-radius:7px; font-size:var(--t-meta);
@@ -663,6 +726,16 @@ footer a:hover{color:var(--ink)}
       </button>
     </div>
 
+    <!-- The way in.
+
+         The default list is the top-rated courses at McGill overall, which is
+         relevant to nobody: a psych student, an engineer and a management
+         student all saw the same eight unrelated departments and had no reason
+         to think the site knew anything about theirs. Every engaged visitor's
+         first move was to type a subject; this is that move, made visible.
+         Ordered by student reviews, so it opens with what people ask for. -->
+    <div class="subjects" id="subjects" hidden></div>
+
     <div class="filters" id="filters">
       <button class="chip" data-f="seats" data-v="1" aria-pressed="false"
               type="button">Has seats</button>
@@ -801,7 +874,10 @@ const state = { credits: [], level: [], seats: 0, start: "", faculty: "",
                 // reload, and finding yourself inside a search you never made.
                 // Arriving at a link and searching are different things and
                 // should not look identical.
-                only: null };
+                only: null,
+                // Exact subject match, not a keyword guess: "COMP" as a keyword
+                // also matches anything with "comp" in its description.
+                subject: null };
 
 /* One box, three meanings -- the same shape the deleted regex tier used.
    "COMP 250" is a lookup, "COMP" is a subject browse, anything else is a topic.
@@ -842,6 +918,7 @@ function queryString(st = state) {
   st.level.forEach(v => p.append("levels", v));
   if (st.seats)    p.set("has_open_seats", "true");
   if (st.start)    p.set("earliest_start", st.start);
+  if (st.subject)  p.set("subject", st.subject);
   if (st.faculty)  p.set("faculty", st.faculty);
   if (st.offset)   p.set("offset", st.offset);
   p.set("sort_by", st.sort);
@@ -1217,6 +1294,7 @@ const hideBanner = () => { $("#banner").hidden = true; };
 function activeFilters() {
   const out = [];
   if (state.q)        out.push({ k: "q",       label: `“${state.q}”` });
+  if (state.subject)  out.push({ k: "subject", label: state.subject });
   state.level.forEach(v   => out.push({ k: "level",   v, label: `${v}-level` }));
   state.credits.forEach(v => out.push({ k: "credits", v, label: `${v} credits` }));
   if (state.seats)    out.push({ k: "seats",   label: "has seats" });
@@ -1579,6 +1657,7 @@ function boot() {
 
   getJSON(`/courses/filters?term=${state.term}`, 8000)
     .then(opts => {
+      renderSubjects(opts.subjects || []);
       const sel = $("#fac");
       sel.length = 1;
       opts.faculties.forEach(f => {
@@ -1699,6 +1778,8 @@ function syncControls() {
     x.setAttribute("aria-pressed", String(
       (f === "credits" || f === "level") ? state[f].includes(v) : !!state[f]));
   });
+  $$("[data-subj]").forEach(x =>
+    x.setAttribute("aria-pressed", String(x.dataset.subj === state.subject)));
   $("#fac").value = state.faculty; markSet($("#fac"), state.faculty);
   $("#start").value = state.start; markSet($("#start"), state.start);
 }
@@ -1750,11 +1831,13 @@ $("#rows").addEventListener("click", e => {
     if (k === "all") {
       state.q = ""; $("#q").value = "";
       state.level = []; state.credits = []; state.seats = 0;
-      state.faculty = ""; state.start = "";
+      state.faculty = ""; state.start = ""; state.subject = null;
     } else if (k === "q") {
       state.q = ""; $("#q").value = "";
     } else if (k === "level" || k === "credits") {
       state[k] = state[k].filter(x => x !== v);
+    } else if (k === "subject") {
+      state.subject = null;
     } else if (k === "seats") {
       state.seats = 0;
     } else {
@@ -1792,6 +1875,44 @@ $("#terms").addEventListener("click", e => {
   syncURL(true);
   boot();                      // faculty list is term-scoped, so refetch it
 });
+/* Which edges have more behind them. Recomputed on scroll and on resize,
+   because "does this overflow" is a question about the viewport, not the list. */
+function syncSubjectFade() {
+  const el = $("#subjects");
+  const room = el.scrollWidth - el.clientWidth;
+  if (room < 4) { delete el.dataset.more; return; }
+  const atStart = el.scrollLeft < 4;
+  const atEnd = el.scrollLeft > room - 4;
+  el.dataset.more = atEnd ? "start" : atStart ? "end" : "both";
+}
+
+function renderSubjects(list) {
+  const el = $("#subjects");
+  // Twelve is what fits before the row stops being scannable and becomes a
+  // wall; the rest stay reachable through the search box.
+  el.innerHTML = list.slice(0, 12).map(s =>
+    `<button class="subj" type="button" data-subj="${esc(s.code)}"
+       aria-pressed="false">${esc(s.code)}<b>${s.count}</b></button>`).join("");
+  el.hidden = false;
+  syncSubjectFade();
+}
+
+$("#subjects").addEventListener("scroll", syncSubjectFade, { passive: true });
+addEventListener("resize", syncSubjectFade);
+
+$("#subjects").addEventListener("click", e => {
+  const b = e.target.closest("[data-subj]"); if (!b) return;
+  const code = b.dataset.subj;
+  state.subject = state.subject === code ? null : code;
+  // A subject is a fresh question: it should not be answered inside a list
+  // narrowed by a link followed earlier, or on page 4 of the previous one.
+  if (state.only) { state.only = null; syncURL(); }
+  state.offset = 0; state.open = null;
+  $$("[data-subj]").forEach(x =>
+    x.setAttribute("aria-pressed", String(x.dataset.subj === state.subject)));
+  load();
+});
+
 $("#onlyclear").addEventListener("click", () => {
   // Back to browsing. The panel goes too -- the course it belonged to is about
   // to fall out of the list it was the only member of.
