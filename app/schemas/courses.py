@@ -1,6 +1,10 @@
 from datetime import datetime
 from typing import Literal
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+from app.text import clean
+
+from app.schemas.sections import MovementResponse
 
 class CourseFilters(BaseModel):
     subject: str | None = None
@@ -9,6 +13,11 @@ class CourseFilters(BaseModel):
     keywords: str | None = None
 
     credits: float | None = Field(None, ge=0, le=30)
+    # Repeatable: ?levels=200&levels=300. Kept alongside min/max rather than
+    # replacing them, so existing links and the API's range semantics still
+    # work; when both are given, the explicit set wins.
+    credits_any: list[float] | None = Field(None, max_length=12)
+    levels: list[int] | None = Field(None, max_length=9)
     min_level: int | None = Field(None, ge=100, le=900)
     max_level: int | None = Field(None, ge=100, le=900)
     undergrad_only: bool = True
@@ -66,6 +75,21 @@ class CourseSummary(BaseModel):
     seats_delta: int | None = None
     trend_days: int | None = None
     seats_per_day: float | None = None
+
+    # avg_rating is the plain mean of the reviews. weighted_rating pulls it
+    # toward the catalogue average in proportion to how few reviews there are,
+    # so five perfect reviews cannot outrank nine hundred good ones. It is what
+    # the "Best rated" ordering uses, and therefore what the list should show.
+    weighted_rating: float | None = None
+
+    @field_validator("title", "faculty", "department", mode="after")
+    @classmethod
+    def _decode_entities(cls, v):
+        # The list is where these are actually read: 2,113 courses carry
+        # "Earth &amp; Planetary Sciences" in department, 471 in faculty, 46 in
+        # title. Encoded once by the scrape, escaped again on render, so the
+        # page showed "&amp;" as text.
+        return clean(v)
 
 class SearchResponse(BaseModel):
     total: int
@@ -154,12 +178,32 @@ class CourseDetail(BaseModel):
     restrictions_text: str | None = None
     logical_prerequisites: dict | None = None
 
+    @field_validator("description", "prerequisites_text", "corequisites_text",
+                     "restrictions_text", "department", "faculty", "title",
+                     mode="after")
+    @classmethod
+    def _strip_markup(cls, v):
+        # Two problems, one cause: the scrape stored McGill's page text already
+        # HTML-encoded. 7% of descriptions kept the page's anchor tags, and 21%
+        # of departments kept its entities -- the database holds "Earth &amp;
+        # Planetary Sciences". The client then escapes what it renders, which is
+        # right for third-party text, so that "&" became "&amp;" a second time
+        # and visitors read the literal characters "&amp;" on the page.
+        return clean(v)
+
     # Filled in by the service, not read off the Course row.
     term: str = ""
     instructors: list[str] = []
     sections: list[SectionSummary] = []
     requirements: list[Requirement] = []
     unlocks: list[Unlocks] = []
+
+    # Seat history for the first section, inlined rather than left to a second
+    # request. The client needed a CRN from this payload before it could ask
+    # for movement, so the two calls were serial across a ~300ms link -- while
+    # here the same pair of queries are ~1ms apart. Null when the course has no
+    # sections in this term, or none has been swept twice yet.
+    movement: MovementResponse | None = None
 
 
 class SubjectOption(BaseModel):
@@ -179,6 +223,14 @@ class FilterOptions(BaseModel):
     term: str
     faculties: list[str]
     departments: list[str]
+
+    @field_validator("faculties", "departments", mode="after")
+    @classmethod
+    def _decode_entity_lists(cls, v):
+        # The frontend had a one-off .replace(/&amp;/g,"&") for exactly this,
+        # applied to the faculty dropdown only -- so the dropdown read correctly
+        # while the card beneath it did not. Fixed at the source instead.
+        return [clean(x) for x in v]
     subjects: list[SubjectOption]
     campuses: list[str]
     class_types: list[str]

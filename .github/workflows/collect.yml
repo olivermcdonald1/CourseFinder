@@ -5,10 +5,21 @@ name: collect seats
 
 on:
   schedule:
-    # 11:00 UTC = 7am Eastern. GitHub's scheduler runs late under load, so
-    # nothing downstream may assume an exact time -- the loader is idempotent
-    # and keyed on the observation date, not on when the job fired.
-    - cron: "0 11 * * *"
+    # Seven sweeps a day, roughly every three hours, skewed toward waking hours
+    # in Eastern time. Seats move during add/drop -- MATH 223 shed 110 of them
+    # in fifteen days -- and a number that is 23 hours old is not a live seat
+    # count, it is yesterday's.
+    #
+    # Seven is a deliberate ceiling, not a starting point. VSB is student-run
+    # infrastructure and each sweep is 76 batched requests per term; polling it
+    # hourly would be taking far more than this needs. If this ever wants to be
+    # more frequent, the answer is fetching one course on demand, not sweeping
+    # all 7,446 more often.
+    #
+    # GitHub's scheduler runs late under load, so nothing downstream may assume
+    # an exact time -- the loader is idempotent and keyed on the observation
+    # date, not on when the job fired.
+    - cron: "0 5,8,11,14,17,20,23 * * *"
   workflow_dispatch:        # so a sweep can be forced by hand after a failure
 
 concurrency:

@@ -115,7 +115,7 @@ def _taught_by(name, term=None):
     return exists().where(and_(*clauses))
 
 
-def _keyword_clauses(text):
+def _keyword_clauses(text, term=None):
     """
     Free-text matching: every token must appear SOMEWHERE, in any field.
 
@@ -130,6 +130,13 @@ def _keyword_clauses(text):
     typing four letters actually wants, rather than an exact subject-code match
     that returns nothing for "calc".
 
+    Instructor name is one of those fields, and it was the omission that showed
+    up first in real use: someone searched "Mckeague", twice, and got nothing --
+    while `instructor=Mckeague` returned CHEM-110 immediately. The data was
+    there and the box simply never looked at it. Who teaches a course is one of
+    the few things people already know before they know the course code, so it
+    belongs in the same guess as the rest.
+
     Capped at 8 tokens so a pasted paragraph can't build 40 OR-groups.
     """
     clauses = []
@@ -141,6 +148,7 @@ def _keyword_clauses(text):
             Course.subject.ilike(pattern),
             Course.title.ilike(pattern),
             Course.description.ilike(pattern),
+            _taught_by(token, term),             # "Mckeague", "muth"
         ))
     return clauses
 
@@ -203,6 +211,8 @@ def _filter_clauses(
     keywords=None,
     # academic shape
     credits=None,
+    credits_any=None,
+    levels=None,
     min_level=None,
     max_level=None,
     undergrad_only=False,
@@ -247,14 +257,33 @@ def _filter_clauses(
     if title is not None:
         clauses.append(Course.title.ilike(f"%{title}%"))
     if keywords is not None:
-        clauses.extend(_keyword_clauses(keywords))
+        # Scoped to the term being browsed, so a professor who taught this in a
+        # different term does not drag the course into a list of what is on
+        # offer now.
+        clauses.extend(_keyword_clauses(keywords, term))
 
     if credits is not None:
         # min == max for fixed-credit courses, so these two predicates cover
         # both them and variable-credit ranges like "0-15".
         clauses.append(Course.credits_min <= credits)
         clauses.append(Course.credits_max >= credits)
-    if undergrad_only and max_level is None:
+    if credits_any:
+        # A course spans credits_min..credits_max, so "3 or 4" means its span
+        # covers any of the chosen values -- not that it equals one of them.
+        clauses.append(or_(*[
+            and_(Course.credits_min <= v, Course.credits_max >= v)
+            for v in credits_any]))
+    # An explicit set of levels, rather than a span. min/max can only express a
+    # contiguous range, so "100 and 300" would quietly drag in every 200-level
+    # course -- wrong in a way nobody would catch by looking. Two separate users
+    # were watched clicking 100, then 200, then 300, then 400 one at a time,
+    # which is the workaround this removes.
+    if levels:
+        clauses.append(func.left(Course.code, 1).in_(
+            [_level_char(v) for v in levels]))
+    elif undergrad_only and max_level is None:
+        # An explicit level set already says which levels are wanted, so the
+        # undergrad ceiling would only be able to contradict it.
         max_level = UNDERGRAD_MAX_LEVEL
     if min_level is not None:
         clauses.append(func.left(Course.code, 1) >= _level_char(min_level))
@@ -503,10 +532,17 @@ def search_page(session, *, limit=DEFAULT_LIMIT, offset=0, sort_by=None,
     Like search_courses, but each row carries its seat rollup.
 
     Returns (Course, n_sections, max_open, max_wait, has_history, seats_delta,
-    trend_days) rows. Separate
+    trend_days, total) rows. Separate
     from search_courses so that function keeps its simple list[Course] contract
     for scripts and tests; both share _filter_clauses and _order_by, so there is
     one definition of what a filter means.
+
+    `total` is how many rows matched before LIMIT, carried on every row by a
+    window function. It used to be a second query, and against a database ~75ms
+    away a second query costs far more than a second column does -- the count is
+    computed by the same scan either way, so this asks for it rather than going
+    back to ask again. Window functions run after WHERE and before LIMIT, which
+    is exactly the number the pager needs.
     """
     if sort_by is not None and sort_by not in SORT_OPTIONS:
         raise ValueError(f"sort_by must be one of {SORT_OPTIONS}, got {sort_by!r}")
@@ -518,7 +554,15 @@ def search_page(session, *, limit=DEFAULT_LIMIT, offset=0, sort_by=None,
                    seats.c.n_sections, seats.c.max_open, seats.c.max_wait,
                    seats.c.observed_at,
                    hist.c.cid.isnot(None).label("has_history"),
-                   trend.c.seats_delta, trend.c.trend_days)
+                   trend.c.seats_delta, trend.c.trend_days,
+                   # The score the list is actually ORDERED by. Sending only the
+                   # raw average meant the page contradicted itself: a course
+                   # showing 4.98 sat above three showing 5.00, because 938
+                   # reviews outweigh 153. Correct, and indistinguishable from a
+                   # broken sort unless the number you rank by is the number you
+                   # show.
+                   _damped_rating().label("weighted_rating"),
+                   func.count().over().label("total"))
             .outerjoin(seats, seats.c.cid == Course.id)
             .outerjoin(hist, hist.c.cid == Course.id)
             .outerjoin(trend, trend.c.cid == Course.id)
@@ -617,10 +661,19 @@ def filter_options(session, term):
                 .distinct().order_by(column))
         return [v for v in session.execute(stmt).scalars().all()]
 
-    subjects_stmt = (select(Course.subject, func.count())
-                     .where(offered)
+    # Ordered by how many student reviews the subject has drawn, NOT by how
+    # many courses it lists. Course count ranks DENT, MIME, MUIN and EXTL at the
+    # top -- dentistry, mechanical-engineering design, music instruction and
+    # external credit -- which is a true fact about the catalogue and useless as
+    # a way in. Reviews rank MATH, MGCR, PSYC, COMP, which is what people
+    # actually typed into the search box today.
+    subjects_stmt = (select(Course.subject,
+                            func.count(),
+                            func.coalesce(func.sum(Course.review_count), 0)
+                                .label("reviews"))
+                     .where(offered, func.left(Course.code, 1) <= "4")
                      .group_by(Course.subject)
-                     .order_by(func.count().desc()))
+                     .order_by(func.coalesce(func.sum(Course.review_count), 0).desc()))
 
     section_column = lambda column: [
         v for v in session.execute(
@@ -650,8 +703,8 @@ def filter_options(session, term):
         "term": term,
         "faculties": course_column(Course.faculty),
         "departments": course_column(Course.department),
-        "subjects": [{"code": s, "count": n}
-                     for s, n in session.execute(subjects_stmt).all()],
+        "subjects": [{"code": code, "count": n}
+                     for code, n, _reviews in session.execute(subjects_stmt).all()],
         "campuses": section_column(Section.campus),
         "class_types": section_column(Section.type_of_class),
         "credit_options": [float(c) for c, _ in
